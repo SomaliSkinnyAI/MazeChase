@@ -1,0 +1,34 @@
+# Unity project ignores (applied at repo root)
+MazeChase/[Ll]ibrary/
+MazeChase/[Tt]emp/
+MazeChase/[Oo]bj/
+MazeChase/[Bb]uild/
+MazeChase/[Bb]uilds/
+MazeChase/[Ll]ogs/
+MazeChase/[Uu]ser[Ss]ettings/
+MazeChase/BuildOutput/
+
+# IDE
+.vs/
+.vscode/
+*.csproj
+*.sln
+*.suo
+*.user
+*.pidb
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build logs at project root
+Logs/
+BuildOutput/
+reports/*.log
+
+# Claude internal
+.claude/
