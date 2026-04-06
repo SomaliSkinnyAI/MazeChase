@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using MazeChase.Core;
 using MazeChase.VFX;
 
 namespace MazeChase.Game
@@ -83,6 +84,9 @@ namespace MazeChase.Game
                 (MazeData.Height * tileSize) / 2f - tileSize / 2f,
                 0f
             );
+
+            if (RuntimeExecutionMode.SuppressPresentation)
+                return;
 
             // Create runtime sprites
             CreateAllSprites();
@@ -520,6 +524,9 @@ namespace MazeChase.Game
         /// </summary>
         public bool RemovePellet(int x, int y)
         {
+            if (RuntimeExecutionMode.SuppressPresentation)
+                return true;
+
             Vector2Int key = new Vector2Int(x, y);
             if (_pelletObjects.TryGetValue(key, out GameObject pelletGo))
             {
@@ -564,6 +571,9 @@ namespace MazeChase.Game
         /// </summary>
         public Coroutine FlashMaze()
         {
+            if (RuntimeExecutionMode.SuppressPresentation)
+                return null;
+
             return StartCoroutine(FlashMazeCoroutine());
         }
 

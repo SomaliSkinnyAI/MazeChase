@@ -784,43 +784,39 @@ Blinky (Ghost 0) gets progressively faster as pellets are cleared:
 
 ### Overview
 
-Toggle with F2. AutoplayManager drives the player by calling `ExpertBot.GetBestDirection()` each frame and injecting the result via `PlayerController.ForceDirection()`. Only operates during GameState.Playing.
+At runtime, `F2` enables the neural autoplay brain, `F3` switches to the rules/planner AI, and `F4` returns to manual control. `AutoplayManager` uses an event-driven control loop: it listens for `PlayerController.OnTileArrived`, captures a graph-aware gameplay snapshot, asks the active autoplay mode for one decision, and commits that move via `PlayerController.SetQueuedDirection()`. This avoids the old per-frame `ForceDirection()` reversal problem and keeps autoplay synchronized to tile centers.
 
-### ExpertBot Decision Algorithm
+### Runtime Modes
 
-ExpertBot makes decisions **only at new tiles** (when CurrentTile changes). Between tiles, it returns the previously decided direction. The algorithm:
+Autoplay supports four runtime modes:
 
-1. **Anti-oscillation check:** If a decision was already made for this tile (stored in `_tileDecisions` cache), reuse it. Cache clears every 30 decisions.
+1. **NeuralPolicy** -- Loads a small policy/value network from exported JSON weights. If no weights are available, it transparently falls back to ResearchPlanner so autoplay remains strong.
+2. **ResearchPlanner** -- Graph-search teacher bot that scores routes using pellet density, energizer timing, frightened opportunities, tunnel escapes, dead-end depth, and ghost pressure.
+3. **ExpertLegacy** -- The original heuristic bot kept for comparison and regression checks.
+4. **Attract** -- A smoother demo-oriented variant of ResearchPlanner with stronger momentum bias and less greed.
 
-2. **Get walkable directions:** Filter AllDirections for those with walkable neighbors.
+### Planner / Policy Stack
 
-3. **Frightened ghost chase:** If any ghost is in Frightened state within 15 Manhattan distance, pick the direction that moves closest to it.
+The modern autoplay stack is split into reusable components:
 
-4. **Score each direction:** For each walkable direction, compute a composite score:
+1. **MazeGraph** -- Precomputed navigation graph over all player-walkable tiles, including tunnel-aware pathfinding, node degree, dead-end depth, and shortest-path distances.
+2. **GhostForecastEngine** -- Converts live ghost positions and states into local danger and frightened-opportunity estimates.
+3. **ObservationEncoder** -- Encodes the live state into a fixed feature vector for policy/value inference.
+4. **ResearchPlannerBot** -- Performs depth-limited route search using the graph and forecast engine.
+5. **GraphPolicyModel** -- Lightweight MLP runtime loaded from `policy_model.json`.
+6. **NeuralPolicyBot** -- Runs the exported model and applies a small amount of reranking / lookahead before choosing a move.
 
-   - **Pellet counting (BFS):** Flood-fill from the neighbor tile, blocking the current tile (so we only count pellets reachable in the forward direction). Count pellets within 15 tiles. Score += count * 10.
+### Offline Training Workflow
 
-   - **Immediate pellet:** If the next tile has a pellet, +20.
+Training happens outside the Unity runtime:
 
-   - **Energizer bonus:** BFS search for energizers within 12 tiles: +40 if found.
+1. Run the game in autoplay with `--autoplay-mode=ResearchPlanner --ai-record`
+2. `AIDatasetRecorder` writes one JSON line per committed tile decision
+3. Python tooling in `tools/ai/` prepares the dataset, trains the policy, evaluates it, and exports Unity JSON weights
+4. Exported weights are placed in `StreamingAssets/AI/policy_model.json` (or persistent data)
+5. `NeuralPolicyBot` loads the file on startup and takes over from the planner fallback
 
-   - **Empty penalty:** If no pellets ahead: -50.
-
-   - **Ghost danger:** For each Chase/Scatter ghost:
-     - Distance 0-1 tiles: -500
-     - Distance 2-3 tiles: -200
-     - Distance 4-5 tiles: -50
-     - Moving toward ghost within 6 tiles: -80 extra
-
-   - **Momentum:** Continuing current direction: +5. Reversing: -30.
-
-   - **Turn bonus:** Perpendicular turns at intersections: +8 (encourages exploration).
-
-5. **Pick highest-scoring direction**, store in tile decision cache.
-
-### Decision Logging
-
-All decisions are logged to `{persistentDataPath}/Logs/ai-decisions.log` with tile position, current direction, chosen direction, score, and available directions.
+See `MazeChase/AI.MD` for the current autoplay implementation status and restart notes.
 
 ---
 
@@ -1051,11 +1047,11 @@ Global inactivity timer: 4 seconds without eating a pellet releases the next gho
 
 ### Known Issues
 
-- **AI oscillation history:** The ExpertBot has undergone multiple rewrites to fix oscillation bugs caused by the interaction between per-frame direction injection and PlayerController's mid-tile reversal logic. The current design uses ForceDirection (which only works at tile centers) and a tile-decision cache to prevent oscillation, but edge cases may still exist near ghost encounters.
+- **Neural weights not yet checked in:** The runtime neural policy path exists, but if `policy_model.json` is missing the game will currently fall back to `ResearchPlannerBot`.
 - **No menu screen:** The game starts directly into gameplay. The GameState enum defines Menu and Paused states but they are unused.
 - **No persistent high score display:** High score is persisted via PlayerPrefs but there is no dedicated display beyond the HUD.
 - **Placeholder asset directories:** Art/, Audio/, Prefabs/, Resources/ directories exist but are empty since everything is generated at runtime.
-- **Tests are placeholder:** EditMode and PlayMode test assemblies exist but contain no test cases.
+- **AI tests still need expansion:** The new graph / forecast / planner stack needs dedicated EditMode and PlayMode coverage.
 - **Single scene:** The game uses only BootScene; there is no scene transition system.
 
 ### Future Work
@@ -1082,6 +1078,8 @@ Global inactivity timer: 4 seconds without eating a pellet releases the next gho
 | A / Left Arrow | Move Left |
 | D / Right Arrow | Move Right |
 | F1 | Toggle diagnostics overlay (FPS, session, errors) |
-| F2 | Toggle AI autoplay |
+| F2 | Enable neural AI autoplay |
+| F3 | Switch to rules/planner AI |
+| F4 | Return to manual control |
 | ESC | Quit game |
 | `--smoke-test` | Command-line flag: auto-quit after 3 seconds (CI mode) |

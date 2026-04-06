@@ -1,0 +1,48 @@
+﻿{
+    "allPassed":  true,
+    "timestamp":  "2026-04-03T18:26:01.1498050-04:00",
+    "projectRoot":  "C:\\ai\\ClaudeCode\\Pacman",
+    "checks":  [
+                   {
+                       "detail":  "C:\\Program Files\\Unity Hub\\Unity Hub.exe",
+                       "name":  "Unity Hub",
+                       "passed":  true
+                   },
+                   {
+                       "detail":  "C:\\Program Files\\Unity\\Hub\\Editor\\6000.0.72f1\\Editor\\Unity.exe",
+                       "name":  "Unity Editor 6000.0.72f1",
+                       "passed":  true
+                   },
+                   {
+                       "detail":  "Installed",
+                       "name":  "Windows Build Support",
+                       "passed":  true
+                   },
+                   {
+                       "detail":  "git version 2.53.0.windows.2",
+                       "name":  "Git",
+                       "passed":  true
+                   },
+                   {
+                       "detail":  "Version 5.1.26100.7920",
+                       "name":  "PowerShell",
+                       "passed":  true
+                   },
+                   {
+                       "detail":  "391.9 GB free",
+                       "name":  "Disk Space (C:)",
+                       "passed":  true
+                   },
+                   {
+                       "detail":  "Project directory is writable",
+                       "name":  "Write Access",
+                       "passed":  true
+                   },
+                   {
+                       "detail":  "vswhere not found - VS Code will be used",
+                       "name":  "Visual Studio (optional)",
+                       "passed":  true
+                   }
+               ],
+    "elapsedSeconds":  0.8
+}

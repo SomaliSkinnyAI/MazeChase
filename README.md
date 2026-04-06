@@ -35,11 +35,12 @@ A modern take on the classic maze-chase arcade game, built entirely in **Unity 6
 
 ### AI Autoplay
 - Toggle with **F2** — watch the AI play the game
-- BFS-based directional pellet scoring (sees around corners)
-- Frightened ghost chasing (top priority)
-- Energizer seeking when threatened
-- Ghost avoidance with manhattan + BFS distance checks
-- Tile decision cache to prevent oscillation
+- **F3** cycles between `NeuralPolicy`, `ResearchPlanner`, `ExpertLegacy`, and `Attract`
+- **F4** toggles the AI debug panel
+- Event-driven control loop: one committed move per tile, no frame-rate reversal thrash
+- Graph-based planner with ghost pressure forecasting, dead-end awareness, energizer timing, and tunnel escape weighting
+- Neural policy runtime path with offline training/export support
+- Dataset recorder for planner imitation training
 
 ### Infrastructure
 - Structured logging with file + JSONL sinks
@@ -54,6 +55,8 @@ A modern take on the classic maze-chase arcade game, built entirely in **Unity 6
 |-----|--------|
 | **WASD** / **Arrow Keys** | Move |
 | **F2** | Toggle AI Autoplay |
+| **F3** | Cycle AI Mode |
+| **F4** | Toggle AI Debug |
 | **F1** | Toggle Debug Overlay |
 | **ESC** | Quit |
 
@@ -95,6 +98,8 @@ powershell -ExecutionPolicy Bypass -File tools/smoke-test.ps1
 | `tools/run-playmode-tests.ps1` | Run PlayMode tests |
 | `tools/collect-diagnostics.ps1` | Gather all logs into a report |
 
+The Unity batch scripts are watchdog-driven: they stream the Unity log, fail fast on compiler errors, and enforce hard timeouts so build/test automation does not sit silent when Unity breaks.
+
 ## Project Structure
 
 ```
@@ -125,6 +130,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a comprehensive deep-dive covering:
 - Maze encoding and coordinate system
 - Tuning tables and configuration
 - Build pipeline
+
+Autoplay/training status lives in [MazeChase/AI.MD](MazeChase/AI.MD), and offline training scripts live in [tools/ai/README.md](tools/ai/README.md).
 
 ## Ghost Personalities
 

@@ -1,0 +1,52 @@
+{
+  "mode": "ResearchPlanner",
+  "headless": true,
+  "maxRounds": 1,
+  "seedCount": 1,
+  "seeds": [
+    2201
+  ],
+  "mergedOutput": "C:\\ai\\ClaudeCode\\Pacman\\tools\\ai\\planner_dataset_headless_smoke.jsonl",
+  "mergedRows": 545,
+  "sourceRows": 545,
+  "timeoutRuns": 0,
+  "loopFlagRuns": 0,
+  "fallbackRuns": 0,
+  "maxRoundReached": 1,
+  "lowestPelletCount": 1,
+  "runs": [
+    {
+      "rows": 545,
+      "sources": [
+        "ResearchPlanner"
+      ],
+      "usedFallback": false,
+      "avgConfidence": 0.9985,
+      "scoreStart": 0,
+      "scoreFinal": 3010,
+      "scoreMax": 3010,
+      "roundStart": 1,
+      "roundFinal": 1,
+      "roundMax": 1,
+      "roundClears": 0,
+      "livesStart": 3,
+      "livesFinal": 1,
+      "livesMin": 1,
+      "deaths": 2,
+      "remainingPelletsStart": 246,
+      "remainingPelletsFinal": 1,
+      "remainingPelletsMin": 1,
+      "maxNoProgressStall": 40,
+      "maxLowPelletNoProgressStall": 38,
+      "tightLoopEvents": 0,
+      "tightLoopLikely": false,
+      "seed": 2201,
+      "mode": "ResearchPlanner",
+      "headless": true,
+      "maxRounds": 1,
+      "timedOut": false,
+      "exitCode": 0,
+      "datasetPath": "C:\\Users\\Oz\\AppData\\LocalLow\\IndieArcade\\MazeChase\\AI\\datasets\\policy-dataset-20260404-190135.jsonl"
+    }
+  ]
+}

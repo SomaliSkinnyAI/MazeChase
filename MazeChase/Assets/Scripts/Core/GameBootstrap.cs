@@ -16,8 +16,16 @@ namespace MazeChase.Core
         {
             EnsureSingleton<LogManager>("LogManager");
             EnsureSingleton<CrashHandler>("CrashHandler");
+            ApplyCommandLineSeed();
 
             Debug.Log("[GameBootstrap] Game starting...");
+            if (RuntimeExecutionMode.SimulationEnabled)
+            {
+                Debug.Log(
+                    $"[GameBootstrap] Simulation mode enabled. presentation={RuntimeExecutionMode.PresentationEnabled}, " +
+                    $"quitOnGameOver={RuntimeExecutionMode.QuitOnGameOver}, maxRounds={RuntimeExecutionMode.MaxRounds}");
+                Application.runInBackground = true;
+            }
         }
 
         private IEnumerator Start()
@@ -45,6 +53,9 @@ namespace MazeChase.Core
 
         private void Update()
         {
+            if (Application.isBatchMode)
+                return;
+
             // ESC to quit
             if (Input.GetKeyDown(KeyCode.Escape))
             {
@@ -69,6 +80,22 @@ namespace MazeChase.Core
             go.AddComponent<T>();
             Object.DontDestroyOnLoad(go);
             Debug.Log($"[GameBootstrap] Created missing singleton: {objectName}");
+        }
+
+        private static void ApplyCommandLineSeed()
+        {
+            string seedArg = CommandLineArgs.GetValue("--ai-seed");
+            if (string.IsNullOrWhiteSpace(seedArg))
+                return;
+
+            if (!int.TryParse(seedArg, out int seed))
+            {
+                Debug.LogWarning($"[GameBootstrap] Ignoring invalid --ai-seed value '{seedArg}'.");
+                return;
+            }
+
+            Random.InitState(seed);
+            Debug.Log($"[GameBootstrap] Applied deterministic seed {seed}.");
         }
     }
 }

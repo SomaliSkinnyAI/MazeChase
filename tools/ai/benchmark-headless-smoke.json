@@ -1,0 +1,64 @@
+{
+  "mode": "ResearchPlanner",
+  "game": "C:\\ai\\ClaudeCode\\Pacman\\MazeChase\\BuildOutput\\Win64\\MazeChase.exe",
+  "datasetDir": "C:\\Users\\Oz\\AppData\\LocalLow\\IndieArcade\\MazeChase\\AI\\datasets",
+  "seeds": [
+    2101
+  ],
+  "timeoutSeconds": 30.0,
+  "fastForward": 40.0,
+  "headless": true,
+  "maxRounds": 1,
+  "runs": [
+    {
+      "rows": 521,
+      "sources": [
+        "ResearchPlanner"
+      ],
+      "usedFallback": false,
+      "avgConfidence": 0.9997,
+      "scoreStart": 0,
+      "scoreFinal": 2490,
+      "scoreMax": 2490,
+      "roundStart": 1,
+      "roundFinal": 1,
+      "roundMax": 1,
+      "roundClears": 0,
+      "livesStart": 3,
+      "livesFinal": 1,
+      "livesMin": 1,
+      "deaths": 2,
+      "remainingPelletsStart": 246,
+      "remainingPelletsFinal": 33,
+      "remainingPelletsMin": 33,
+      "maxNoProgressStall": 95,
+      "maxLowPelletNoProgressStall": 0,
+      "tightLoopEvents": 0,
+      "tightLoopLikely": false,
+      "seed": 2101,
+      "mode": "ResearchPlanner",
+      "timedOut": false,
+      "exitCode": 0,
+      "datasetPath": "C:\\Users\\Oz\\AppData\\LocalLow\\IndieArcade\\MazeChase\\AI\\datasets\\policy-dataset-20260404-190059.jsonl"
+    }
+  ],
+  "aggregate": {
+    "runCount": 1,
+    "clearedRuns": 0,
+    "clearRate": 0.0,
+    "loopLikelyRuns": 0,
+    "loopLikelyRate": 0.0,
+    "timeoutRuns": 0,
+    "timeoutRate": 0.0,
+    "fallbackRuns": 0,
+    "fallbackRate": 0.0,
+    "avgFinalScore": 2490.0,
+    "avgMaxRound": 1.0,
+    "avgMinPellets": 33.0,
+    "avgFinalPellets": 33.0,
+    "avgDeaths": 2.0,
+    "avgConfidence": 0.9997,
+    "avgMaxNoProgressStall": 95.0,
+    "avgMaxLowPelletNoProgressStall": 0.0
+  }
+}

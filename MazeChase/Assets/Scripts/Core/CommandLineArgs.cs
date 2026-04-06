@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 
 namespace MazeChase.Core
 {
@@ -62,6 +63,30 @@ namespace MazeChase.Core
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Returns the parsed integer value for a command-line argument, or the
+        /// supplied default value when the argument is missing or invalid.
+        /// </summary>
+        public static int GetInt(string key, int defaultValue = 0)
+        {
+            string value = GetValue(key);
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
+                ? parsed
+                : defaultValue;
+        }
+
+        /// <summary>
+        /// Returns the parsed float value for a command-line argument, or the
+        /// supplied default value when the argument is missing or invalid.
+        /// </summary>
+        public static float GetFloat(string key, float defaultValue = 0f)
+        {
+            string value = GetValue(key);
+            return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out float parsed)
+                ? parsed
+                : defaultValue;
         }
     }
 }

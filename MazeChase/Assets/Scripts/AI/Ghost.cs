@@ -1,5 +1,6 @@
 using UnityEngine;
 using MazeChase.Game;
+using MazeChase.Core;
 
 namespace MazeChase.AI
 {
@@ -20,6 +21,7 @@ namespace MazeChase.AI
         [Header("References")]
         [SerializeField] private PlayerController player;
         [SerializeField] private MazeRenderer mazeRenderer;
+        [SerializeField] private GhostModeTimer ghostModeTimer;
 
         [Header("Speed (tiles per second)")]
         [SerializeField] private float normalSpeed = 3.75f;
@@ -113,8 +115,9 @@ namespace MazeChase.AI
             Direction.Right
         };
 
-        // -- Ghost house exit target --
-        private static readonly Vector2Int HouseExitTile = new Vector2Int(13, 19);
+        // -- Ghost house navigation targets --
+        private static readonly Vector2Int HouseDoorTile = new Vector2Int(13, 12);
+        private static readonly Vector2Int HouseExitTile = new Vector2Int(13, 11);
 
         // ================================================================
         // Unity lifecycle
@@ -133,6 +136,9 @@ namespace MazeChase.AI
 
             if (mazeRenderer == null)
                 mazeRenderer = FindFirstObjectByType<MazeRenderer>();
+
+            if (ghostModeTimer == null)
+                ghostModeTimer = FindFirstObjectByType<GhostModeTimer>();
 
             // Initialize targeting strategy
             targetStrategy = CreateTargetStrategy(ghostIndex);
@@ -308,7 +314,7 @@ namespace MazeChase.AI
             // Check if we reached the ghost house after being eaten
             if (currentState == GhostState.Eaten)
             {
-                if (IsGhostHouseTile(currentTile))
+                if (currentTile == HouseDoorTile || IsGhostHouseTile(currentTile))
                 {
                     SetState(GhostState.ExitingHouse);
                     return;
@@ -320,8 +326,8 @@ namespace MazeChase.AI
             {
                 if (currentTile == HouseExitTile || !IsGhostHouseTile(currentTile))
                 {
-                    // We've exited -- revert to the current global mode
-                    SetState(GhostState.Scatter);
+                    // We've exited -- adopt the active global mode.
+                    SetState(GetModeAfterHouseExit());
                     return;
                 }
             }
@@ -489,11 +495,11 @@ namespace MazeChase.AI
                     return GetRandomTarget();
 
                 case GhostState.Eaten:
-                    // Target the ghost house entrance
-                    return HouseExitTile;
+                    // Eaten ghosts head for the house door to regenerate.
+                    return HouseDoorTile;
 
                 case GhostState.ExitingHouse:
-                    // Target the exit tile above the ghost house
+                    // Leave the house through the exit tile above the door.
                     return HouseExitTile;
 
                 case GhostState.InHouse:
@@ -516,6 +522,20 @@ namespace MazeChase.AI
             return new Vector2Int(rx, ry);
         }
 
+        private GhostState GetModeAfterHouseExit()
+        {
+            if (ghostModeTimer == null)
+                ghostModeTimer = FindFirstObjectByType<GhostModeTimer>();
+
+            if (ghostModeTimer != null &&
+                (ghostModeTimer.CurrentMode == GhostState.Scatter || ghostModeTimer.CurrentMode == GhostState.Chase))
+            {
+                return ghostModeTimer.CurrentMode;
+            }
+
+            return GhostState.Scatter;
+        }
+
         // ================================================================
         // State management
         // ================================================================
@@ -528,10 +548,19 @@ namespace MazeChase.AI
         {
             GhostState previousState = currentState;
 
-            // Ghosts in the house or exiting aren't affected by scatter/chase/frightened
-            if ((currentState == GhostState.InHouse || currentState == GhostState.ExitingHouse)
+            // Ghosts still waiting inside the house should ignore the live mode
+            // until they are explicitly released. Ghosts already exiting the house
+            // may still transition into scatter/chase once they reach open play.
+            if (currentState == GhostState.InHouse
                 && (newState == GhostState.Scatter || newState == GhostState.Chase
                     || newState == GhostState.Frightened))
+            {
+                return;
+            }
+
+            // Ghosts exiting the house should not be frightened until they fully
+            // rejoin normal play, but they can adopt scatter/chase on exit.
+            if (currentState == GhostState.ExitingHouse && newState == GhostState.Frightened)
             {
                 return;
             }
@@ -560,6 +589,13 @@ namespace MazeChase.AI
                 ReverseDirection();
                 frightenedTimer = 0f;
                 frightenedFlashing = false;
+            }
+
+            if (newState == GhostState.ExitingHouse && previousState != GhostState.ExitingHouse)
+            {
+                // Reset the direction so the ghost can choose the cleanest route
+                // out of the house instead of being blocked by reverse rules.
+                currentDirection = Direction.None;
             }
 
             ApplyVisuals();
@@ -640,6 +676,14 @@ namespace MazeChase.AI
             if (duration <= 0f)
                 return; // Some rounds have no frightened time
 
+            if (currentState == GhostState.Frightened)
+            {
+                frightenedTimer = 0f;
+                frightenedFlashing = false;
+                ApplyVisuals();
+                return;
+            }
+
             SetState(GhostState.Frightened);
         }
 
@@ -659,6 +703,13 @@ namespace MazeChase.AI
                 return;
             }
             _spriteCreated = true;
+
+            if (RuntimeExecutionMode.SuppressPresentation)
+            {
+                if (spriteRenderer != null)
+                    spriteRenderer.enabled = false;
+                return;
+            }
 
             // Create 2 body animation frames (wavy bottom offset between frames)
             // and 2 frightened animation frames. Eyes/pupils are separate child objects.
@@ -928,6 +979,13 @@ namespace MazeChase.AI
         {
             if (spriteRenderer == null)
                 return;
+
+            if (RuntimeExecutionMode.SuppressPresentation)
+            {
+                spriteRenderer.enabled = false;
+                transform.localScale = Vector3.one;
+                return;
+            }
 
             bool showEyes = true;
             bool showPupils = true;

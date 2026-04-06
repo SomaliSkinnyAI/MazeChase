@@ -45,6 +45,13 @@ namespace MazeChase.Game
         /// </summary>
         public event Action OnDeath;
 
+        /// <summary>
+        /// Fired after the player fully arrives at a tile center and any pellet or
+        /// energizer on that tile has been processed, but before movement continues.
+        /// Autoplay uses this to commit exactly one decision per tile.
+        /// </summary>
+        public event Action<Vector2Int> OnTileArrived;
+
         // -- Private state --
         private Vector2Int _targetTile;
         private Vector3 _originWorldPos;
@@ -83,7 +90,17 @@ namespace MazeChase.Game
 
         private void Start()
         {
-            CreatePlayerSprite();
+            if (!RuntimeExecutionMode.SuppressPresentation)
+            {
+                CreatePlayerSprite();
+            }
+            else
+            {
+                _spriteRenderer = gameObject.GetComponent<SpriteRenderer>();
+                if (_spriteRenderer != null)
+                    _spriteRenderer.enabled = false;
+            }
+
             ResetToSpawn();
         }
 
@@ -264,7 +281,12 @@ namespace MazeChase.Game
 
         private void AdvanceLerp()
         {
-            _lerpT += _tilesPerSecond * Time.deltaTime;
+            float tileDistance = Vector3.Distance(_originWorldPos, _targetWorldPos);
+            if (tileDistance > 0.001f)
+                _lerpT += (_tilesPerSecond / tileDistance) * Time.deltaTime;
+            else
+                _lerpT = 1f;
+
             transform.position = Vector3.Lerp(_originWorldPos, _targetWorldPos, _lerpT);
 
             // Check for mid-tile direction reversal.
@@ -312,6 +334,8 @@ namespace MazeChase.Game
                 _mazeRenderer.RemovePellet(CurrentTile);
                 OnPelletCollected?.Invoke(CurrentTile, tileType);
             }
+
+            OnTileArrived?.Invoke(CurrentTile);
 
             // Try to continue moving -- prefer queued direction, then current.
             if (QueuedDirection != Direction.None && CanMoveInDirection(CurrentTile, QueuedDirection))
@@ -501,6 +525,9 @@ namespace MazeChase.Game
         /// </summary>
         private void UpdateFacingRotation(Direction dir)
         {
+            if (_spriteRenderer == null)
+                return;
+
             switch (dir)
             {
                 case Direction.Right:
@@ -524,6 +551,9 @@ namespace MazeChase.Game
 
         private void AnimateMouth()
         {
+            if (_spriteRenderer == null || _mouthFrames == null || _mouthFrames.Length < 3)
+                return;
+
             // When not moving, show the half-open idle frame and reset scale.
             if (State != MovementState.Moving)
             {

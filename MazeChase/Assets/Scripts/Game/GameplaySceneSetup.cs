@@ -23,6 +23,7 @@ namespace MazeChase.Game
         private Audio.AudioManager _audio;
 
         private bool _roundActive;
+        private bool _simulationQuitRequested;
         private Coroutine _frightenedCoroutine;
 
         private void Start()
@@ -35,7 +36,8 @@ namespace MazeChase.Game
             Debug.Log("[GameplaySceneSetup] Setting up gameplay...");
 
             // Configure camera for 2D maze view
-            SetupCamera();
+            if (RuntimeExecutionMode.PresentationEnabled)
+                SetupCamera();
 
             // Create maze
             var mazeObj = new GameObject("Maze");
@@ -75,7 +77,7 @@ namespace MazeChase.Game
             _ghostHouse.Init(_ghosts, _mazeRenderer);
 
             // Create audio manager if not present
-            if (Audio.AudioManager.Instance == null)
+            if (RuntimeExecutionMode.PresentationEnabled && Audio.AudioManager.Instance == null)
             {
                 var audioObj = new GameObject("AudioManager");
                 _audio = audioObj.AddComponent<Audio.AudioManager>();
@@ -86,15 +88,19 @@ namespace MazeChase.Game
             }
 
             // Create HUD
-            var hudObj = new GameObject("HUD");
-            hudObj.AddComponent<UI.HUDController>();
+            if (RuntimeExecutionMode.PresentationEnabled)
+            {
+                var hudObj = new GameObject("HUD");
+                hudObj.AddComponent<UI.HUDController>();
+            }
 
             // Create autoplay manager
             var autoplayObj = new GameObject("AutoplayManager");
-            autoplayObj.AddComponent<MazeChase.AI.Autoplay.AutoplayManager>();
+            var autoplay = autoplayObj.AddComponent<MazeChase.AI.Autoplay.AutoplayManager>();
+            autoplay.Initialize(_player, _ghosts, _pelletManager, _fruitSpawner, _ghostModeTimer);
 
             // Create screen effects singleton
-            if (ScreenEffects.Instance == null)
+            if (RuntimeExecutionMode.PresentationEnabled && ScreenEffects.Instance == null)
             {
                 var sfxObj = new GameObject("ScreenEffects");
                 sfxObj.AddComponent<ScreenEffects>();
@@ -131,6 +137,8 @@ namespace MazeChase.Game
         private void StartRound(int round)
         {
             Debug.Log($"[GameplaySceneSetup] Starting round {round}");
+            CancelFrightenedCoroutine();
+
             var score = ScoreManager.Instance;
             if (score != null) score.CurrentRound = round;
 
@@ -164,10 +172,11 @@ namespace MazeChase.Game
 
             // Show ready message then unfreeze
             var hud = UI.HUDController.Instance;
-            if (hud != null) hud.ShowMessage("READY!", 2f);
+            if (hud != null && RuntimeExecutionMode.PresentationEnabled)
+                hud.ShowMessage("READY!", RuntimeExecutionMode.ReadyDelaySeconds);
             if (_audio != null) _audio.PlayGameStart();
 
-            StartCoroutine(UnfreezeAfterDelay(2f));
+            StartCoroutine(UnfreezeAfterDelay(RuntimeExecutionMode.ReadyDelaySeconds));
             _roundActive = true;
 
             if (GameStateManager.Instance != null)
@@ -179,7 +188,8 @@ namespace MazeChase.Game
             _player.Freeze();
             foreach (var g in _ghosts) g.Freeze();
 
-            yield return new WaitForSeconds(delay);
+            if (delay > 0f)
+                yield return new WaitForSeconds(delay);
 
             _player.Unfreeze();
             foreach (var g in _ghosts) g.Unfreeze();
@@ -238,27 +248,32 @@ namespace MazeChase.Game
 
             _ghostModeTimer.PauseTimer();
 
-            foreach (var ghost in _ghosts)
+            if (_ghostHouse != null)
+                _ghostHouse.FrightenAll(tuning.FrightenedDuration, tuning.FrightenedFlashCount);
+            else
             {
-                if (ghost.CurrentState != GhostState.Eaten &&
-                    ghost.CurrentState != GhostState.InHouse)
-                    ghost.SetState(GhostState.Frightened);
+                foreach (var ghost in _ghosts)
+                {
+                    if (ghost != null)
+                        ghost.StartFrightened(tuning.FrightenedDuration, tuning.FrightenedFlashCount);
+                }
             }
 
             _player.SetSpeed(tuning.FrightenedPlayerSpeed);
             if (_audio != null) _audio.StartFrightened();
 
             // Screen flash for energizer activation
-            if (ScreenEffects.Instance != null)
+            if (RuntimeExecutionMode.PresentationEnabled && ScreenEffects.Instance != null)
                 ScreenEffects.Instance.Flash(new Color(0.3f, 0.5f, 1f, 0.4f), 0.2f);
 
-            if (_frightenedCoroutine != null) StopCoroutine(_frightenedCoroutine);
+            CancelFrightenedCoroutine();
             _frightenedCoroutine = StartCoroutine(EndFrightenedAfterDelay(tuning.FrightenedDuration));
         }
 
         private IEnumerator EndFrightenedAfterDelay(float duration)
         {
             yield return new WaitForSeconds(duration);
+            _frightenedCoroutine = null;
             EndFrightenedMode();
         }
 
@@ -304,14 +319,15 @@ namespace MazeChase.Game
             if (_audio != null) _audio.PlayGhostEat();
 
             // VFX: screen flash and ghost eat particles
-            if (ScreenEffects.Instance != null)
+            if (RuntimeExecutionMode.PresentationEnabled && ScreenEffects.Instance != null)
                 ScreenEffects.Instance.Flash(new Color(1f, 1f, 1f, 0.3f), 0.12f);
 
-            SimpleParticles.SpawnGhostEatEffect(ghost.transform.position, Color.cyan);
+            if (RuntimeExecutionMode.PresentationEnabled)
+                SimpleParticles.SpawnGhostEatEffect(ghost.transform.position, Color.cyan);
 
             // HUD: score popup and combo text
             var hud = UI.HUDController.Instance;
-            if (hud != null && points >= 200)
+            if (RuntimeExecutionMode.PresentationEnabled && hud != null && points >= 200)
             {
                 hud.ShowScorePopup(points);
                 hud.ShowComboText(points);
@@ -325,10 +341,10 @@ namespace MazeChase.Game
             Debug.Log($"[Gameplay] Player caught by ghost {ghost.GhostIndex}!");
 
             // VFX: screen shake and death particles
-            if (ScreenEffects.Instance != null)
+            if (RuntimeExecutionMode.PresentationEnabled && ScreenEffects.Instance != null)
                 ScreenEffects.Instance.Shake(0.15f, 0.3f);
 
-            if (_player != null)
+            if (RuntimeExecutionMode.PresentationEnabled && _player != null)
                 SimpleParticles.SpawnDeathEffect(_player.transform.position);
 
             StartCoroutine(HandleDeath());
@@ -339,12 +355,14 @@ namespace MazeChase.Game
             if (GameStateManager.Instance != null)
                 GameStateManager.Instance.ChangeState(GameState.Dying);
 
+            CancelFrightenedCoroutine();
             _player.Freeze();
             foreach (var g in _ghosts) g.Freeze();
             _ghostModeTimer.PauseTimer();
             if (_audio != null) _audio.PlayDeath();
 
-            yield return new WaitForSeconds(1.5f);
+            if (RuntimeExecutionMode.DeathPauseSeconds > 0f)
+                yield return new WaitForSeconds(RuntimeExecutionMode.DeathPauseSeconds);
 
             var score = ScoreManager.Instance;
             if (score != null)
@@ -356,7 +374,12 @@ namespace MazeChase.Game
                     if (GameStateManager.Instance != null)
                         GameStateManager.Instance.ChangeState(GameState.GameOver);
                     var hud = UI.HUDController.Instance;
-                    if (hud != null) hud.ShowMessage("GAME OVER", 0f);
+                    if (hud != null && RuntimeExecutionMode.PresentationEnabled) hud.ShowMessage("GAME OVER", 0f);
+
+                    if (RuntimeExecutionMode.QuitOnGameOver)
+                    {
+                        RequestSimulationExit("game over");
+                    }
                     yield break;
                 }
             }
@@ -364,13 +387,17 @@ namespace MazeChase.Game
             // Reset positions and continue
             _player.ResetToSpawn();
             foreach (var g in _ghosts) g.ResetToSpawn();
-            _ghostHouse.ResetForNewRound();
+            _ghostHouse.ResetAfterDeath();
+            if (_ghosts != null && _ghosts.Length > 0 && _pelletManager != null)
+                _ghosts[0].UpdateElroyState(_pelletManager.RemainingPellets, _pelletManager.TotalPellets);
             _ghostModeTimer.ResetTimer();
 
             var readyHud = UI.HUDController.Instance;
-            if (readyHud != null) readyHud.ShowMessage("READY!", 2f);
+            if (readyHud != null && RuntimeExecutionMode.PresentationEnabled)
+                readyHud.ShowMessage("READY!", RuntimeExecutionMode.DeathReadyDelaySeconds);
 
-            yield return new WaitForSeconds(2f);
+            if (RuntimeExecutionMode.DeathReadyDelaySeconds > 0f)
+                yield return new WaitForSeconds(RuntimeExecutionMode.DeathReadyDelaySeconds);
             _roundActive = true;
             _player.Unfreeze();
             foreach (var g in _ghosts) g.Unfreeze();
@@ -394,16 +421,27 @@ namespace MazeChase.Game
             if (GameStateManager.Instance != null)
                 GameStateManager.Instance.ChangeState(GameState.RoundClear);
 
+            CancelFrightenedCoroutine();
             _player.Freeze();
             foreach (var g in _ghosts) g.Freeze();
             _ghostModeTimer.PauseTimer();
             if (_audio != null) _audio.PlayRoundClear();
 
-            yield return _mazeRenderer.FlashMaze();
-            yield return new WaitForSeconds(1f);
+            if (RuntimeExecutionMode.PresentationEnabled && _mazeRenderer != null)
+                yield return _mazeRenderer.FlashMaze();
+
+            if (RuntimeExecutionMode.RoundClearPauseSeconds > 0f)
+                yield return new WaitForSeconds(RuntimeExecutionMode.RoundClearPauseSeconds);
 
             var score = ScoreManager.Instance;
             int nextRound = (score != null ? score.CurrentRound : 1) + 1;
+
+            if (RuntimeExecutionMode.MaxRounds > 0 && nextRound > RuntimeExecutionMode.MaxRounds)
+            {
+                RequestSimulationExit($"cleared round {RuntimeExecutionMode.MaxRounds}");
+                yield break;
+            }
+
             StartRound(nextRound);
         }
 
@@ -429,6 +467,8 @@ namespace MazeChase.Game
 
         private void OnDestroy()
         {
+            CancelFrightenedCoroutine();
+
             if (_pelletManager != null)
             {
                 _pelletManager.OnPelletCollected -= OnPelletCollected;
@@ -443,6 +483,35 @@ namespace MazeChase.Game
             }
             if (_ghostModeTimer != null)
                 _ghostModeTimer.OnModeChanged -= OnGhostModeChanged;
+        }
+
+        private void CancelFrightenedCoroutine()
+        {
+            if (_frightenedCoroutine == null)
+                return;
+
+            StopCoroutine(_frightenedCoroutine);
+            _frightenedCoroutine = null;
+        }
+
+        private void RequestSimulationExit(string reason)
+        {
+            if (_simulationQuitRequested)
+                return;
+
+            _simulationQuitRequested = true;
+            StartCoroutine(QuitSimulationAfterFrame(reason));
+        }
+
+        private IEnumerator QuitSimulationAfterFrame(string reason)
+        {
+            Debug.Log($"[GameplaySceneSetup] Simulation run complete ({reason}). Exiting.");
+            yield return null;
+            Application.Quit(0);
+
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#endif
         }
     }
 }

@@ -30,5 +30,13 @@ Logs/
 BuildOutput/
 reports/*.log
 
+# AI training data (large files - keep scripts/docs/benchmarks, exclude bulk data)
+tools/ai/*.jsonl
+tools/ai/*.npz
+tools/ai/*.log
+tools/ai/*.err.log
+tools/ai/__pycache__/
+tools/ai/backups/
+
 # Claude internal
 .claude/

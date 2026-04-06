@@ -2,7 +2,8 @@
 # run-game.ps1 — Launches the built game executable and monitors it
 param(
     [int]$TimeoutSeconds = 30,
-    [switch]$SmokeTest
+    [switch]$SmokeTest,
+    [string[]]$GameArgs = @()
 )
 $ErrorActionPreference = 'Stop'
 $Script:StartTime = Get-Date
@@ -34,6 +35,7 @@ $gameArgs = @()
 if ($SmokeTest) {
     $gameArgs += "--smoke-test"
 }
+$gameArgs += $GameArgs
 
 Log "Launching game..."
 if ($gameArgs.Count -gt 0) {

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using MazeChase.AI;
 using MazeChase.Game;
 
 namespace MazeChase.AI.Autoplay
@@ -13,8 +14,9 @@ namespace MazeChase.AI.Autoplay
     /// NO route planning. NO BFS pathfinding. NO reversal logic.
     /// Just: "which way has the most food and fewest ghosts?"
     /// </summary>
-    public class ExpertBot
+    public class ExpertBot : IAutoplayBot
     {
+        private AutoplayContext _context;
         private Vector2Int _lastTile = new Vector2Int(-1, -1);
         private Direction _lastDir = Direction.None;
         // Anti-oscillation: remember decisions for recent tiles
@@ -38,6 +40,40 @@ namespace MazeChase.AI.Autoplay
         }
 
         private void Log(string msg) { _log?.WriteLine(msg); }
+
+        public string Name => "ExpertLegacy";
+
+        public void Initialize(AutoplayContext context)
+        {
+            _context = context;
+        }
+
+        public void ResetForRound()
+        {
+            _lastTile = new Vector2Int(-1, -1);
+            _lastDir = Direction.None;
+            _tileDecisions.Clear();
+            _decisionAge = 0;
+        }
+
+        public BotDecision Evaluate(GameStateSnapshot snapshot)
+        {
+            if (_context == null)
+                return BotDecision.None;
+
+            Direction direction = GetBestDirection(
+                snapshot.PlayerTile,
+                snapshot.PlayerDirection,
+                _context.Ghosts,
+                _context.Pellets);
+
+            var decision = new BotDecision(direction, 0.55f, 0.2f, AutoplayObjective.ClearPellets, "Legacy heuristic")
+            {
+                Source = Name
+            };
+            decision.DirectionScores[(int)direction] = 1f;
+            return decision;
+        }
 
         public Direction GetBestDirection(
             Vector2Int tile,

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using UnityEngine;
+using MazeChase.Core;
 
 namespace MazeChase.Game
 {
@@ -89,9 +90,12 @@ namespace MazeChase.Game
                 ? _mazeRenderer.TileToWorld(_fruitTile.x, _fruitTile.y)
                 : new Vector3(_fruitTile.x * 0.5f, _fruitTile.y * 0.5f, 0f);
 
-            var sr = _activeFruit.AddComponent<SpriteRenderer>();
-            sr.sprite = CreateFruitSprite();
-            sr.sortingOrder = 5;
+            if (!RuntimeExecutionMode.SuppressPresentation)
+            {
+                var sr = _activeFruit.AddComponent<SpriteRenderer>();
+                sr.sprite = CreateFruitSprite();
+                sr.sortingOrder = 5;
+            }
 
             Debug.Log($"[FruitSpawner] Spawned {_currentFruitName} worth {_currentFruitScore} points.");
             StartCoroutine(DespawnAfterDelay());
