@@ -152,7 +152,7 @@ Implemented under `Assets/Scripts/AI/Autoplay/`:
 - the encoder now also appends player/ghost velocity vectors plus player junction proximity, which gives the stateless MLP better motion awareness without adding recurrent state
 - the trainer/export/runtime stack now supports a separate `death-risk` prediction head
 - low-confidence neural moves can now hand off to `ExpertLegacy` instead of forcing a weak policy choice
-- current exported checkpoint is `planner-distill-v20-teacherfix`
+- current exported checkpoint is `planner-distill-v21-curriculum`
 - runtime validation has confirmed `NeuralPolicy` is running with `usedFallback = false` on the exported weight file
 - the upgraded `102`-feature multi-head pipeline has been smoke-validated end to end with:
   - `tools/ai/policy_dataset_mlp_pivot_smoke.npz`
@@ -228,9 +228,10 @@ Implemented:
 - the teacher endgame fix was validated and v20 trained from it is now the best checkpoint (100% clear rate on both holdouts, avg score 10180-10531)
 - v16-v19 all failed to beat v15 not because of architecture issues, but because they were trained on loopy teacher data
 - the `RecentTileWindow` has been expanded from 24 to 48 across runtime and training
-- **v20 is now the active exported brain: `planner-distill-v20-teacherfix`**
-- v20 still has high fallback rate (1.0) -- it relies on the improved planner for endgame rescue
-- the next curriculum pass should target reducing fallback dependence while maintaining the 100% clear rate
+- **v21 is now the active exported brain: `planner-distill-v21-curriculum`**
+- v21 improved score +18.2% over v20 on holdout (12,031 vs 10,180), reduced fallback from 1.0 to 0.875, and cut final pellets from 29.25 to 7.375
+- fresh seeds show steady gains: avg score 10,575 (+0.4%), zero timeouts (was 12.5%), final pellets halved
+- fallback is still 1.0 on fresh seeds -- the endgame loop pattern persists and likely needs frame-stacking to fully resolve
 - tests for the new AI stack still need to be expanded
 - danger heatmap data exists internally, but the debug UI is still text-first rather than a full maze overlay
 - we now have `tools/ai/run_benchmark.py` for seeded validation, but we still need to build a longer-running benchmark history across checkpoints so regressions are obvious
@@ -744,10 +745,87 @@ Benchmark artifacts:
 
 **v20 is now the best checkpoint by a large margin.** It achieves 100% clear rate on both holdouts and reaches round 3 on all 8 fresh seeds. The main remaining issue is high fallback rate (1.0) -- the model still relies on the fixed planner for endgame rescue. This is expected since the fixed planner IS better at endgame now, so the fallback is stronger. The next curriculum pass should target reducing fallback dependence.
 
-Next steps:
-1. Promote v20 as the active runtime export
-2. Mine v20 failure seeds (high-fallback, loop-likely cases) with the fixed teacher for curriculum
-3. Train v21 with targeted curriculum to reduce fallback rate
+Next steps (completed -- see v21 section below):
+1. [done] Promote v20 as the active runtime export
+2. [done] Mine v20 failure seeds (high-fallback, loop-likely cases) with the fixed teacher for curriculum
+3. [done] Train v21 with targeted curriculum to reduce fallback rate
+
+## Fallback Reduction Curriculum (v21)
+
+Completed on April 12, 2026:
+
+v20 achieved 100% clear rate but had fallbackRate=1.0 on all seeds -- the student model relied on planner rescue for every endgame. v21 was trained to internalize the endgame strategy so the student can handle more of these situations autonomously.
+
+### Curriculum Mining
+
+- candidate pool: seeds 8001-8024 (24 fresh seeds)
+- student mode: NeuralPolicy (v20)
+- selection filter: `usedFallback == true`
+- all 24/24 student runs used fallback (confirms universal fallback dependence)
+- 12 hardest seeds selected by difficulty score (484-554 range)
+- 7/12 selected seeds flagged as tight-loop-likely
+- selected seeds: `8009 8001 8022 8018 8012 8021 8015 8008 8020 8004 8007 8014`
+- teacher replay rows: 8,600
+- baseline rows (v20 broad): 14,616
+- merged curriculum: 23,216 rows
+
+### Training
+
+- blend: v20 broad teacher data at 1.0x + v21 curriculum teacher-only at 3.0x
+- prepared dataset: 23,216 samples
+  - endgame-weighted: 5,084
+  - death-risk positives: 552
+  - junction rows: 5,485
+  - escape rows: 11,135
+  - input-weighted (curriculum): 8,600
+- trained: 50 epochs, 128->64 hidden, best val snapshot at epoch ~38
+  - val_policy=0.1408, val_acc=94.4%, val_risk_acc=97.1%
+
+### v21 Benchmark Results
+
+Main holdout (seeds 4301-4308):
+
+| Metric | v20 | v21 | Change |
+|--------|-----|-----|--------|
+| avgFinalScore | 10,180 | **12,031** | **+18.2%** |
+| clearRate | 1.0 | 1.0 | same |
+| fallbackRate | 1.0 | **0.875** | **-12.5%** |
+| avgFinalPellets | 29.25 | **7.375** | **-74.8%** |
+| timeoutRate | 0.375 | **0.125** | **-66.7%** |
+| avgMaxRound | 2.875 | 2.75 | -0.125 |
+| avgDeaths | 1.5 | 1.875 | +0.375 |
+
+Fresh unseen holdout (seeds 6101-6108):
+
+| Metric | v20 | v21 | Change |
+|--------|-----|-----|--------|
+| avgFinalScore | 10,531 | 10,575 | +0.4% |
+| clearRate | 1.0 | 1.0 | same |
+| fallbackRate | 1.0 | 1.0 | same |
+| avgFinalPellets | 28.875 | **14.25** | **-50.7%** |
+| timeoutRate | 0.125 | **0.0** | **-100%** |
+| avgMaxRound | 3.0 | 2.625 | -0.375 |
+| avgDeaths | 1.75 | 2.0 | +0.25 |
+
+Artifacts:
+- `tools/ai/planner_curriculum_v21_report.json`
+- `tools/ai/planner_curriculum_v21_status.md`
+- `tools/ai/planner_curriculum_v21_status.json`
+- `tools/ai/planner_dataset_v21_curriculum.jsonl`
+- `tools/ai/planner_dataset_v21_teacher_only.jsonl`
+- `tools/ai/planner_dataset_v21_prepared.npz`
+- `tools/ai/planner_model_v21_curriculum.npz`
+- `tools/ai/benchmark-neural-v21-level3-fresh.json`
+- `tools/ai/benchmark-neural-v21-6101-6108.json`
+
+**v21 is now the active exported brain: `planner-distill-v21-curriculum`**
+
+Current takeaway:
+- v21 is a clear improvement on holdout: score up 18.2%, fallback dropping (1 seed cleared without planner rescue), dramatically better pellet cleanup
+- fresh seeds show steady but smaller gains -- same clear rate, halved final pellet count, zero timeouts
+- fallback is still 1.0 on fresh seeds, confirming that the endgame loop pattern is deep-seated
+- curriculum mining is hitting diminishing returns -- the student learns incremental improvements from each pass but the stateless MLP fundamentally struggles with multi-step endgame navigation
+- **frame-stacking (N=3) is now the recommended next architecture upgrade** to give the student temporal context for loop detection
 
 ## Latest Benchmark Snapshot
 
@@ -778,18 +856,18 @@ Latest benchmark artifacts live in:
 - `tools/ai/benchmark-neural-v16-postfix-level3-fresh.json`
 - `tools/ai/benchmark-neural-v17-postfix-level3-fresh.json`
 - `tools/ai/benchmark-neural-v17-postfix-level3-4501-4508.json`
+- `tools/ai/benchmark-neural-v20-level3-fresh.json`
+- `tools/ai/benchmark-neural-v20-6101-6108.json`
+- `tools/ai/benchmark-neural-v21-level3-fresh.json`
+- `tools/ai/benchmark-neural-v21-6101-6108.json`
 - `tools/ai/benchmark-planner-v2.json`
 
 Current takeaway:
 
-- `ResearchPlanner` is still the stronger endgame finisher
-- `NeuralPolicy v2` could clear early rounds but still fell into long low-pellet loops
-- `NeuralPolicy v3` cuts the average worst low-pellet stall roughly in half on the latest 3-seed benchmark, but one seed still regressed badly before reaching endgame
-- `NeuralPolicy v4` is trained from a much larger planner corpus and shows better pellet-pressure in some seeded runs, but it is still a mixed checkpoint rather than a clear replacement
-- `NeuralPolicy v5` showed that hard-seed replay helps, but the first curriculum weighting pass overfit some failure modes
-- `NeuralPolicy v10` was the strongest pre-temporal level-3-focused student, materially beating `v6` on score and pellet pressure on the `4301-4308` holdout
-- `NeuralPolicy v15` is now the active exported checkpoint because the near-clear curriculum improved score and pellet pressure on both `4301-4308` and `4501-4508`
-- after the gameplay-speed correction, live `v15` is still the best checkpoint; the fresh `v16` and `v17` retraining attempts did not replace it
+- `NeuralPolicy v21` is now the active exported checkpoint, trained on fallback-targeting curriculum from v20 failures
+- v21 achieves 100% clear rate, avg score 12,031 on holdout (+18.2% over v20), and reduced fallback from 1.0 to 0.875
+- the teacher endgame fix (v20) was the major breakthrough; v21 curriculum mining provides incremental gains on top
+- fallback is still 1.0 on fresh seeds -- frame-stacking is the recommended next upgrade to break through the endgame loop ceiling
 
 ## Recent Gameplay Bug Pass
 
@@ -812,12 +890,16 @@ If restarting from scratch, verify these in order:
 
 1. Read this file
 2. Read `tools/ai/README.md`
-3. Assume `v20` is the live baseline (`planner-distill-v20-teacherfix`)
-4. v20 achieves 100% clear rate and reaches round 3 consistently, but has high fallback rate (1.0)
-5. The immediate next steps are:
-   a. Mine v20 failure cases (high-fallback, loop-likely) with the fixed teacher for curriculum
-   b. Train v21 targeting reduced fallback rate while maintaining 100% clear rate
-   c. If v21 succeeds, implement frame-stacking (N=3) for temporal context
+3. Assume `v21` is the live baseline (`planner-distill-v21-curriculum`)
+4. v21 achieves 100% clear rate, avg score 12,031 on holdout, fallbackRate 0.875 (holdout) / 1.0 (fresh)
+5. Curriculum mining has hit diminishing returns -- v21 was an incremental gain over v20
+6. The immediate next step is **frame-stacking (N=3)** to give the stateless MLP temporal context:
+   a. In `prepare_dataset.py`: maintain circular buffer of last 3 observations per episode, concatenate into 306-feature input
+   b. In `train_policy.py`: increase hidden layers to 192->96 for the larger input
+   c. In `NeuralPolicyBot.cs`: maintain a `Queue<float[]>` of recent frames, concatenate at each decision
+   d. In `ObservationEncoder.cs`: add `BuildStackedInput()` method
+   e. Train v22 from frame-stacked data, benchmark against v21
+7. If frame-stacking also plateaus, consider RL with reward shaping (requires live environment stepping infrastructure)
 
 Key architecture context:
 - `ResearchPlannerBot.cs` uses dynamic search depth (12 in endgame), recency-weighted visit penalties, reduced corridor penalties, stronger pellet gravity, and a direct pathfinding override for extreme endgame
@@ -825,3 +907,4 @@ Key architecture context:
 - `ObservationEncoder.cs` and `prepare_dataset.py` revisit normalization updated from /4 to /6
 - `MazeGraph.cs` has `FindNearestPelletTile()` for the pathfinding override
 - `NeuralPolicyBot.cs` does 1-step value/risk lookahead with heuristic blending and loop bias
+- Current model: 102-feature input, 128->64 hidden MLP, 3 heads (policy/value/death-risk)

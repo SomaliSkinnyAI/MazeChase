@@ -529,12 +529,14 @@ Current checkpoint status:
 - `v10` remains the most aggressive level-3-focused student on pellet pressure
 - `v15` was the active export until v20 replaced it
 - `v16`-`v19` all failed to beat `v15` -- root cause identified as teacher looping (83% endgame loop rate), not architecture
-- **`v20` is now the active export: `planner-distill-v20-teacherfix`**
-  - trained on fixed-teacher data (loop rate 33% vs old 83%) blended with v10/v15 curriculum
-  - main holdout (4301-4308): `avgFinalScore=10180`, `clearRate=1.0`, `avgMaxRound=2.875`
-  - fresh unseen (6101-6108): `avgFinalScore=10531`, `clearRate=1.0`, `avgMaxRound=3.0`
-  - v20 beats v15 by +10.5% score, +33% clear rate, and reaches round 3 consistently
-  - remaining issue: fallbackRate=1.0 (relies on improved planner for endgame rescue)
+- `v20` (`planner-distill-v20-teacherfix`): trained on fixed-teacher data, achieved 100% clear rate but fallbackRate=1.0
+- **`v21` is now the active export: `planner-distill-v21-curriculum`**
+  - trained on v20 broad data (14,616 rows at 1.0x) + fallback-targeting curriculum (8,600 rows at 3.0x)
+  - curriculum mined from 24 fresh seeds (8001-8024), 12 hardest replayed with fixed teacher
+  - main holdout (4301-4308): `avgFinalScore=12031`, `clearRate=1.0`, `fallbackRate=0.875`
+  - fresh unseen (6101-6108): `avgFinalScore=10575`, `clearRate=1.0`, `fallbackRate=1.0`
+  - v21 beats v20 by +18.2% score on holdout, final pellets cut by 75%, fallback starting to drop
+  - remaining issue: fallback still 1.0 on fresh seeds -- frame-stacking (N=3) is recommended next
 
 ## Teacher Endgame Fix (April 5, 2026)
 
