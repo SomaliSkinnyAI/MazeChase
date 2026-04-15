@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using MazeChase.Core;
@@ -216,6 +217,54 @@ namespace MazeChase.Game
         {
             Freeze();
             OnDeath?.Invoke();
+        }
+
+        /// <summary>
+        /// Plays a shrink-and-dissolve death animation over the given duration.
+        /// The sprite shrinks to zero while fading out, like classic Pac-Man.
+        /// Call <see cref="ResetDeathVisuals"/> before respawning.
+        /// </summary>
+        public IEnumerator PlayDeathAnimation(float duration = 1.0f)
+        {
+            if (_spriteRenderer == null)
+                yield break;
+
+            float elapsed = 0f;
+            Vector3 originalScale = Vector3.one;
+            Color originalColor = _spriteRenderer.color;
+
+            // Set to wide-open mouth for the death pose.
+            if (_mouthFrames != null && _mouthFrames.Length >= 3)
+                _spriteRenderer.sprite = _mouthFrames[2];
+
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / duration);
+
+                // Shrink: 1 -> 0 with an ease-in curve.
+                float scale = Mathf.Lerp(1f, 0f, t * t);
+                transform.localScale = originalScale * scale;
+
+                // Fade out in the last 40% of the animation.
+                float alpha = t < 0.6f ? 1f : Mathf.Lerp(1f, 0f, (t - 0.6f) / 0.4f);
+                _spriteRenderer.color = new Color(originalColor.r, originalColor.g, originalColor.b, alpha);
+
+                yield return null;
+            }
+
+            _spriteRenderer.color = new Color(originalColor.r, originalColor.g, originalColor.b, 0f);
+            transform.localScale = Vector3.zero;
+        }
+
+        /// <summary>
+        /// Restores sprite visibility after a death animation.
+        /// </summary>
+        public void ResetDeathVisuals()
+        {
+            transform.localScale = Vector3.one;
+            if (_spriteRenderer != null)
+                _spriteRenderer.color = Color.white;
         }
 
         // -- Input --

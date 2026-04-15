@@ -36,9 +36,9 @@ namespace MazeChase.AI.Autoplay
             _fallbackPlanner.Initialize(context);
             _confidenceFallbackBot.Initialize(context);
 
-            if (GraphPolicyModel.TryLoadDefault(out _model, out _modelSource, _encoder.InputSize, _encoder.LegacyInputSize))
+            if (GraphPolicyModel.TryLoadDefault(out _model, out _modelSource, _encoder.StackedInputSize, _encoder.InputSize, _encoder.LegacyInputSize))
             {
-                Debug.Log($"[NeuralPolicyBot] Loaded policy model from {_modelSource}");
+                Debug.Log($"[NeuralPolicyBot] Loaded policy model from {_modelSource} (inputSize={_model.InputSize}, stackDepth={_encoder.FrameStackDepth})");
             }
         }
 
@@ -46,6 +46,7 @@ namespace MazeChase.AI.Autoplay
         {
             _fallbackPlanner.ResetForRound();
             _confidenceFallbackBot.ResetForRound();
+            _encoder?.ResetFrameBuffer();
         }
 
         public BotDecision Evaluate(GameStateSnapshot snapshot)
@@ -104,7 +105,7 @@ namespace MazeChase.AI.Autoplay
 
                 GameStateSnapshot projected = BuildProjectedSnapshot(snapshot, direction);
                 PolicyFeatureFrame projectedFeatures = _encoder.Encode(projected);
-                float[] projectedModelInput = _encoder.BuildModelInput(projectedFeatures, _model.InputSize);
+                float[] projectedModelInput = _encoder.BuildModelInputProjected(projectedFeatures, _model.InputSize);
                 _model.Evaluate(projectedModelInput, projectedFeatures.LegalMask, new float[5], out float projectedValue, out float projectedRisk);
                 score += projectedValue * 0.4f;
                 score -= projectedRisk * 0.65f;

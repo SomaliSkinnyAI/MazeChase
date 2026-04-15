@@ -13,6 +13,8 @@ namespace MazeChase.Core
         private static bool _suppressPresentation;
         private static bool _quitOnGameOver;
         private static int _maxRounds;
+        private static bool _rlServerEnabled;
+        private static int _rlServerPort;
 
         public static bool SimulationEnabled
         {
@@ -52,6 +54,24 @@ namespace MazeChase.Core
             }
         }
 
+        public static bool RLServerEnabled
+        {
+            get
+            {
+                EnsureInitialized();
+                return _rlServerEnabled;
+            }
+        }
+
+        public static int RLServerPort
+        {
+            get
+            {
+                EnsureInitialized();
+                return _rlServerPort;
+            }
+        }
+
         public static float ReadyDelaySeconds => SimulationEnabled ? 0f : 2f;
         public static float DeathPauseSeconds => SimulationEnabled ? 0f : 1.5f;
         public static float DeathReadyDelaySeconds => SimulationEnabled ? 0f : 2f;
@@ -70,7 +90,9 @@ namespace MazeChase.Core
 
             _simulationEnabled = Application.isBatchMode || CommandLineArgs.HasFlag("--ai-headless");
             _suppressPresentation = _simulationEnabled || CommandLineArgs.HasFlag("--ai-no-render");
-            _quitOnGameOver = _simulationEnabled || CommandLineArgs.HasFlag("--ai-quit-on-game-over");
+            _rlServerEnabled = CommandLineArgs.HasFlag("--rl-server");
+            _rlServerPort = CommandLineArgs.GetInt("--rl-port", 9090);
+            _quitOnGameOver = (_simulationEnabled || CommandLineArgs.HasFlag("--ai-quit-on-game-over")) && !_rlServerEnabled;
             _maxRounds = Mathf.Max(0, CommandLineArgs.GetInt("--ai-max-rounds", 0));
             _initialized = true;
         }

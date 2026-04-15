@@ -94,6 +94,7 @@ MazeChase/                          Unity project root
           LogSeverity.cs            Enum: Trace, Debug, Info, Warning, Error, Critical
       UI/
         HUDController.cs            OnGUI-based HUD (score, lives, round, messages, popups)
+        MenuController.cs           Title screen, pause overlay, and game-over screen (OnGUI)
       VFX/
         ScreenEffects.cs            Full-screen flash and camera shake singleton
         SimpleParticles.cs          Lightweight particle bursts (pellet, ghost eat, death)
@@ -118,6 +119,12 @@ tools/                              PowerShell build and CI scripts (project-roo
   run-playmode-tests.ps1            Runs PlayMode tests via batchmode
   smoke-test.ps1                    End-to-end: build, launch, verify
   verify-environment.ps1            Checks Unity, Git, disk space, VS
+  ai/                               Python AI training and evaluation tools
+    prepare_dataset.py              Dataset preparation for behavioral cloning
+    train_policy.py                 Behavioral cloning (MLP) training
+    export_weights.py               Convert trained weights to Unity JSON format
+    rl_environment.py               Gym-like Python client for Unity RL server
+    dqn_trainer.py                  Double DQN trainer (pure NumPy)
 ```
 
 ---
@@ -134,6 +141,7 @@ tools/                              PowerShell build and CI scripts (project-roo
 | `ScoreManager.cs` | Singleton tracking score, high score (persisted via PlayerPrefs), lives (default 3), round number, and the ghost-eat combo multiplier (200/400/800/1600). Fires OnScoreChanged, OnLivesChanged, OnRoundChanged. |
 | `RoundManager.cs` | Manages a single round lifecycle: pellet counting, round-clear detection, and advancement to next round. Fires OnRoundStarted and OnRoundCleared. |
 | `CommandLineArgs.cs` | Static utility for parsing command-line arguments. Supports `--flag` (HasFlag) and `--key=value` or `--key value` (GetValue). Caches args on first access. |
+| `RuntimeExecutionMode.cs` | Centralizes runtime execution-profile flags for switching between interactive play and simulation. Reads `--ai-headless`, `--ai-no-render`, `--rl-server`, `--rl-port`, `--ai-quit-on-game-over`, `--ai-max-rounds`. Provides timing overrides (zero delays in simulation) and `MaxAllowedTimeScale`. |
 
 ### Game (Assets/Scripts/Game/)
 
@@ -168,8 +176,16 @@ tools/                              PowerShell build and CI scripts (project-roo
 
 | File | Description |
 |------|-------------|
-| `AutoplayManager.cs` | Singleton MonoBehaviour toggled with F2. When active, calls ExpertBot.GetBestDirection each frame and injects the result into PlayerController via ForceDirection. Displays "AI PLAYING" label via OnGUI. Finds player, ghosts, and PelletManager references lazily. |
-| `ExpertBot.cs` | Stateless-per-tile AI decision maker. Only re-evaluates when arriving at a new tile. Uses directional BFS pellet counting (blocking the backward tile to only count forward-reachable pellets), ghost danger scoring with distance-based penalties, frightened ghost chasing via Manhattan distance, energizer detection via BFS, momentum bonuses, and anti-oscillation via a tile-decision cache. Logs decisions to a file. |
+| `AutoplayManager.cs` | Singleton MonoBehaviour managing AI autoplay. Listens for `OnTileArrived`, captures game state via `AutoplayContext`, asks the active bot for a direction, and commits via `SetQueuedDirection`. Supports NeuralPolicy, ResearchPlanner, ExpertLegacy, and Attract modes. Skipped when `--rl-server` is active. |
+| `AutoplayContext.cs` | Shared context object holding references to player, ghosts, pellets, graph, forecast engine, and runtime memory (visited tiles, decision history). |
+| `ExpertBot.cs` | Legacy heuristic AI using directional BFS pellet counting, ghost danger scoring, and anti-oscillation. Kept for comparison. |
+| `GhostForecastEngine.cs` | Converts live ghost positions/states into local danger and frightened-opportunity estimates using graph distances. |
+| `GraphPolicyModel.cs` | Lightweight MLP runtime: loads `policy_model.json` weights and runs forward pass (102→192→96→policy/value/risk heads). Used by both behavioral cloning and DQN-trained models. |
+| `MazeGraph.cs` | Precomputed navigation graph over walkable tiles with tunnel-aware pathfinding, node degree, dead-end depth, and BFS distances. |
+| `NeuralPolicyBot.cs` | Runs GraphPolicyModel inference with legal-move masking and optional reranking. Falls back to ResearchPlannerBot if no weights available. |
+| `ObservationEncoder.cs` | Encodes game state into 102-feature vector for policy inference and RL training. |
+| `ResearchPlannerBot.cs` | Graph-search teacher bot scoring routes via pellet density, energizer timing, ghost pressure, tunnel escapes, and dead-end avoidance. |
+| `RLEnvironmentServer.cs` | TCP server exposing the game as a step-by-step RL environment. Freezes game on tile arrival, sends observation/reward/done to Python, receives action commands. Manages episode lifecycle, death handling, and reward shaping. Activated by `--rl-server` flag. |
 
 ### Audio (Assets/Scripts/Audio/)
 
@@ -183,6 +199,7 @@ tools/                              PowerShell build and CI scripts (project-roo
 | File | Description |
 |------|-------------|
 | `HUDController.cs` | Singleton OnGUI-based HUD. Renders score (top-left), high score (top-center), round (top-right), lives (bottom-left), FPS (bottom-right), center messages (READY!, GAME OVER), floating score popups that drift upward and fade, and combo text for ghost-eating chains. Uses semi-transparent background bars for readability. |
+| `MenuController.cs` | Singleton OnGUI-based menu system. Provides three screens: **Title** (game name, controls, START button, Enter/Space hotkeys, high score display), **Paused** (ESC/P toggle, Resume/Quit buttons, freezes time), **GameOver** (final score, high score, round, Play Again/Quit buttons, R/Q hotkeys). Fires `OnStartGame` and `OnRestartGame` events consumed by `GameBootstrap`. Listens to `GameStateManager.OnStateChanged` to auto-show game-over screen. Skipped in simulation mode. |
 
 ### VFX (Assets/Scripts/VFX/)
 
@@ -818,6 +835,66 @@ Training happens outside the Unity runtime:
 
 See `MazeChase/AI.MD` for the current autoplay implementation status and restart notes.
 
+### Reinforcement Learning (DQN) Training System
+
+In addition to the behavioral cloning pipeline above, the project includes a full Deep Q-Learning (DQN) training system that allows the agent to learn directly from gameplay reward signals instead of imitating a teacher.
+
+#### Architecture
+
+```
+Python (dqn_trainer.py)                    Unity (RLEnvironmentServer.cs)
+┌────────────────────┐                     ┌──────────────────────────┐
+│  DQN Trainer       │◄── TCP/JSON ───────►│  RL Environment Server   │
+│  - Q-Network       │    port 9090+       │  - ObservationEncoder    │
+│  - Replay Buffer   │                     │  - Reward Shaping        │
+│  - Target Network  │  action ──────►     │  - Episode Management    │
+│  - Epsilon-Greedy  │  ◄────── obs,r,done │  - Pause/Resume Control  │
+│  - Adam Optimizer  │                     │                          │
+│  4 parallel envs   │                     │  4 Unity instances       │
+└────────────────────┘                     └──────────────────────────┘
+```
+
+#### Unity Side: RLEnvironmentServer
+
+`RLEnvironmentServer.cs` is a DontDestroyOnLoad singleton that exposes the running game as a step-by-step RL environment over TCP. Key design decisions:
+
+- **Activation:** `--rl-server` command-line flag, optional `--rl-port=9090`
+- **Stepping:** Subscribes to `PlayerController.OnTileArrived` (same as AutoplayManager). Each tile arrival generates one observation, computes reward, and freezes the game (`Time.timeScale = 0`) until the Python agent responds with an action.
+- **TCP Protocol:** Length-prefixed JSON messages (4-byte little-endian length + UTF-8 JSON payload).
+- **Threading:** Background `ThreadPool` thread for TCP reads, main thread polls in `Update()` for pending actions/resets.
+- **Episode Management:** Game-over triggers `done=true`. Python sends a reset command, which triggers `GameBootstrap.OnRLReset()` to destroy/recreate the entire gameplay session.
+
+#### Reward Shaping
+
+| Component | Value | Purpose |
+|-----------|-------|---------|
+| Score delta | `+delta / 100` | Pellet=0.1, energizer=0.5, ghost combos=2.0-16.0 |
+| Pellet bonus | `+0.5` per pellet | Primary collection incentive |
+| Death penalty | `-5.0` per life lost | Strong avoidance signal |
+| Round clear | `+10.0` | Completion bonus |
+| Time penalty | `-0.01` per step | Anti-dawdle |
+| Stall penalty | `-0.05` per step after grace | Anti-loop, escalating |
+| Stall timeout | 500 steps without progress | Episode termination |
+
+#### Python Side
+
+- **`rl_environment.py`:** Gym-like client. `UnityEnvironment` manages a single Unity process, `VectorizedUnityEnvironment` runs N parallel instances with threaded step for faster data collection.
+- **`dqn_trainer.py`:** Double DQN trainer using the same MLP topology as the behavioral cloning model (102→192→96→4). Pure NumPy, no PyTorch dependency. Includes replay buffer (500K), target network (hard copy every 5K steps), epsilon-greedy exploration (1.0→0.05 over 200K steps), Huber loss, and checkpointing.
+
+#### Deployment
+
+The trained Q-network exports to the same `policy_model.json` format used by behavioral cloning. The Q-head weights map to `policyW/policyB` slots, so `NeuralPolicyBot` loads DQN weights identically — zero deployment code changes needed.
+
+#### Command-Line Flags
+
+| Flag | Description |
+|------|-------------|
+| `--rl-server` | Enable RL environment server (TCP) |
+| `--rl-port=N` | TCP port (default: 9090) |
+| `--ai-headless` | Simulation mode (skip animations, menus) |
+| `--ai-fast-forward=N` | Time scale multiplier |
+| `--ai-seed=N` | Deterministic random seed |
+
 ---
 
 ## 10. Audio System
@@ -1048,7 +1125,7 @@ Global inactivity timer: 4 seconds without eating a pellet releases the next gho
 ### Known Issues
 
 - **Neural weights not yet checked in:** The runtime neural policy path exists, but if `policy_model.json` is missing the game will currently fall back to `ResearchPlannerBot`.
-- **No menu screen:** The game starts directly into gameplay. The GameState enum defines Menu and Paused states but they are unused.
+- **~~No menu screen~~** *(Resolved)* — `MenuController` provides title screen, pause overlay, and game-over screen using OnGUI.
 - **No persistent high score display:** High score is persisted via PlayerPrefs but there is no dedicated display beyond the HUD.
 - **Placeholder asset directories:** Art/, Audio/, Prefabs/, Resources/ directories exist but are empty since everything is generated at runtime.
 - **AI tests still need expansion:** The new graph / forecast / planner stack needs dedicated EditMode and PlayMode coverage.
@@ -1056,9 +1133,12 @@ Global inactivity timer: 4 seconds without eating a pellet releases the next gho
 
 ### Future Work
 
-- Implement a title/menu screen and pause functionality
-- Add proper death animation (Pac-Man shrinking/dissolving)
-- Implement extra life at 10,000 points (classic behavior)
+- ~~Implement a title/menu screen and pause functionality~~ *(Done — `MenuController.cs`)*
+- ~~Add proper death animation (Pac-Man shrinking/dissolving)~~ *(Done — `PlayerController.PlayDeathAnimation`)*
+- ~~Implement extra life at 10,000 points (classic behavior)~~ *(Done — `ScoreManager.AddScore` awards at 10k)*
+- ~~Game over just exits~~ *(Done — `MenuController` game-over screen with restart/quit)*
+- ~~DQN reinforcement learning system~~ *(Done — `RLEnvironmentServer.cs`, `dqn_trainer.py`, `rl_environment.py`)*
+- Train DQN agent and benchmark against behavioral cloning v21
 - Add intermission cutscenes between certain rounds
 - Create actual unit and integration tests
 - Add sound volume controls in a settings menu

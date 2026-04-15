@@ -94,10 +94,19 @@ namespace MazeChase.Game
                 hudObj.AddComponent<UI.HUDController>();
             }
 
-            // Create autoplay manager
-            var autoplayObj = new GameObject("AutoplayManager");
-            var autoplay = autoplayObj.AddComponent<MazeChase.AI.Autoplay.AutoplayManager>();
-            autoplay.Initialize(_player, _ghosts, _pelletManager, _fruitSpawner, _ghostModeTimer);
+            // Create autoplay manager or initialize RL environment server.
+            if (RuntimeExecutionMode.RLServerEnabled)
+            {
+                var rlServer = MazeChase.AI.Autoplay.RLEnvironmentServer.Instance;
+                if (rlServer != null)
+                    rlServer.Reinitialize(_player, _ghosts, _pelletManager, _fruitSpawner, _ghostModeTimer, _mazeRenderer);
+            }
+            else
+            {
+                var autoplayObj = new GameObject("AutoplayManager");
+                var autoplay = autoplayObj.AddComponent<MazeChase.AI.Autoplay.AutoplayManager>();
+                autoplay.Initialize(_player, _ghosts, _pelletManager, _fruitSpawner, _ghostModeTimer);
+            }
 
             // Create screen effects singleton
             if (RuntimeExecutionMode.PresentationEnabled && ScreenEffects.Instance == null)
@@ -361,8 +370,24 @@ namespace MazeChase.Game
             _ghostModeTimer.PauseTimer();
             if (_audio != null) _audio.PlayDeath();
 
+            // Brief pause before the death animation (ghosts visible).
             if (RuntimeExecutionMode.DeathPauseSeconds > 0f)
-                yield return new WaitForSeconds(RuntimeExecutionMode.DeathPauseSeconds);
+            {
+                float prePause = Mathf.Min(0.5f, RuntimeExecutionMode.DeathPauseSeconds);
+                yield return new WaitForSeconds(prePause);
+
+                // Hide ghosts during death animation (classic behavior).
+                if (RuntimeExecutionMode.PresentationEnabled)
+                    foreach (var g in _ghosts) SetGhostVisible(g, false);
+
+                // Play shrink/dissolve animation.
+                if (RuntimeExecutionMode.PresentationEnabled)
+                    yield return _player.PlayDeathAnimation(1.0f);
+
+                float remaining = RuntimeExecutionMode.DeathPauseSeconds - prePause - 1.0f;
+                if (remaining > 0f)
+                    yield return new WaitForSeconds(remaining);
+            }
 
             var score = ScoreManager.Instance;
             if (score != null)
@@ -373,8 +398,14 @@ namespace MazeChase.Game
                     Debug.Log("[Gameplay] Game Over!");
                     if (GameStateManager.Instance != null)
                         GameStateManager.Instance.ChangeState(GameState.GameOver);
-                    var hud = UI.HUDController.Instance;
-                    if (hud != null && RuntimeExecutionMode.PresentationEnabled) hud.ShowMessage("GAME OVER", 0f);
+
+                    // Show HUD message only when MenuController isn't handling the game-over screen.
+                    if (UI.MenuController.Instance == null)
+                    {
+                        var hud = UI.HUDController.Instance;
+                        if (hud != null && RuntimeExecutionMode.PresentationEnabled)
+                            hud.ShowMessage("GAME OVER", 0f);
+                    }
 
                     if (RuntimeExecutionMode.QuitOnGameOver)
                     {
@@ -384,7 +415,10 @@ namespace MazeChase.Game
                 }
             }
 
-            // Reset positions and continue
+            // Reset positions and restore visuals after death animation.
+            _player.ResetDeathVisuals();
+            if (RuntimeExecutionMode.PresentationEnabled)
+                foreach (var g in _ghosts) SetGhostVisible(g, true);
             _player.ResetToSpawn();
             foreach (var g in _ghosts) g.ResetToSpawn();
             _ghostHouse.ResetAfterDeath();
@@ -483,6 +517,56 @@ namespace MazeChase.Game
             }
             if (_ghostModeTimer != null)
                 _ghostModeTimer.OnModeChanged -= OnGhostModeChanged;
+
+            // Clean up all game objects created by this setup so restarts start fresh.
+            // In RL server mode, use DestroyImmediate so singleton Instance references
+            // are cleared before new gameplay objects are created in the same frame.
+            bool immediate = RuntimeExecutionMode.RLServerEnabled;
+            DestroyIfNotNull(_mazeRenderer, immediate);
+            DestroyIfNotNull(_pelletManager, immediate);
+            DestroyIfNotNull(_player, immediate);
+            DestroyIfNotNull(_collisionManager, immediate);
+            DestroyIfNotNull(_ghostModeTimer, immediate);
+            DestroyIfNotNull(_ghostHouse, immediate);
+            DestroyIfNotNull(_fruitSpawner, immediate);
+            if (_ghosts != null)
+                foreach (var g in _ghosts) DestroyIfNotNull(g, immediate);
+            if (_audio != null && _audio.gameObject.name == "AudioManager")
+            {
+                if (immediate) DestroyImmediate(_audio.gameObject);
+                else Destroy(_audio.gameObject);
+            }
+
+            // Destroy HUD, Autoplay, ScreenEffects created by this setup.
+            if (UI.HUDController.Instance != null)
+            {
+                if (immediate) DestroyImmediate(UI.HUDController.Instance.gameObject);
+                else Destroy(UI.HUDController.Instance.gameObject);
+            }
+            var autoplay = FindAnyObjectByType<AI.Autoplay.AutoplayManager>();
+            if (autoplay != null)
+            {
+                if (immediate) DestroyImmediate(autoplay.gameObject);
+                else Destroy(autoplay.gameObject);
+            }
+            if (VFX.ScreenEffects.Instance != null)
+            {
+                if (immediate) DestroyImmediate(VFX.ScreenEffects.Instance.gameObject);
+                else Destroy(VFX.ScreenEffects.Instance.gameObject);
+            }
+        }
+
+        private static void DestroyIfNotNull(Component c, bool immediate = false)
+        {
+            if (c == null) return;
+            if (immediate) DestroyImmediate(c.gameObject);
+            else Destroy(c.gameObject);
+        }
+
+        private static void SetGhostVisible(Ghost ghost, bool visible)
+        {
+            var sr = ghost != null ? ghost.GetComponent<SpriteRenderer>() : null;
+            if (sr != null) sr.enabled = visible;
         }
 
         private void CancelFrightenedCoroutine()

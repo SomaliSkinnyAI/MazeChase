@@ -18,15 +18,29 @@ namespace MazeChase.AI.Autoplay
         private const int TemporalFeatureCount = 8;
         private const int LegacyInputSizeValue = (FeaturesPerDirection * 4) + BaseGlobalFeatureCount + TemporalFeatureCount;
         private const int BaseSectionSize = (FeaturesPerDirection * 4) + BaseGlobalFeatureCount;
-        private readonly AutoplayContext _context;
+        private const int DefaultFrameStackDepth = 3;
 
-        public ObservationEncoder(AutoplayContext context)
+        private readonly AutoplayContext _context;
+        private readonly int _frameStackDepth;
+        private readonly float[][] _frameBuffer;
+        private int _frameBufferCount;
+
+        public ObservationEncoder(AutoplayContext context, int frameStackDepth = DefaultFrameStackDepth)
         {
             _context = context;
+            _frameStackDepth = Mathf.Max(1, frameStackDepth);
+            _frameBuffer = new float[_frameStackDepth][];
+            _frameBufferCount = 0;
         }
 
         public int InputSize => (FeaturesPerDirection * 4) + BaseGlobalFeatureCount + EnhancedGlobalFeatureCount + TemporalFeatureCount;
         public int LegacyInputSize => LegacyInputSizeValue;
+
+        /// <summary>Input size when frame-stacking is active (InputSize * frameStackDepth).</summary>
+        public int StackedInputSize => InputSize * _frameStackDepth;
+
+        /// <summary>Number of frames being stacked.</summary>
+        public int FrameStackDepth => _frameStackDepth;
 
         public PolicyFeatureFrame Encode(GameStateSnapshot snapshot)
         {
@@ -101,10 +115,66 @@ namespace MazeChase.AI.Autoplay
             };
         }
 
+        /// <summary>
+        /// Pushes the current frame's features into the ring buffer and returns a
+        /// concatenated array of [current, previous, ...] frames. Older slots are
+        /// zero-padded at episode start.
+        /// </summary>
+        public float[] BuildStackedInput(float[] currentFrame)
+        {
+            // Shift buffer: newest at index 0.
+            for (int i = _frameBuffer.Length - 1; i > 0; i--)
+                _frameBuffer[i] = _frameBuffer[i - 1];
+            _frameBuffer[0] = currentFrame;
+            _frameBufferCount = Mathf.Min(_frameBufferCount + 1, _frameStackDepth);
+
+            int singleSize = currentFrame.Length;
+            float[] stacked = new float[singleSize * _frameStackDepth];
+            for (int f = 0; f < _frameStackDepth; f++)
+            {
+                if (_frameBuffer[f] != null)
+                    System.Array.Copy(_frameBuffer[f], 0, stacked, f * singleSize, singleSize);
+                // else: stays zero-padded
+            }
+            return stacked;
+        }
+
+        /// <summary>
+        /// Builds a stacked input using the existing history but substituting a
+        /// hypothetical current frame (for 1-step lookahead projections).
+        /// Does NOT modify the frame buffer.
+        /// </summary>
+        public float[] BuildProjectedStackedInput(float[] projectedFrame)
+        {
+            int singleSize = projectedFrame.Length;
+            float[] stacked = new float[singleSize * _frameStackDepth];
+            // Slot 0 = projected frame (not the real current frame).
+            System.Array.Copy(projectedFrame, 0, stacked, 0, singleSize);
+            // Slots 1..N-1 = the real buffer's slots 0..N-2 (shift by one).
+            for (int f = 1; f < _frameStackDepth; f++)
+            {
+                if (_frameBuffer[f - 1] != null)
+                    System.Array.Copy(_frameBuffer[f - 1], 0, stacked, f * singleSize, singleSize);
+            }
+            return stacked;
+        }
+
+        /// <summary>Clears the frame buffer (call on round reset / respawn).</summary>
+        public void ResetFrameBuffer()
+        {
+            for (int i = 0; i < _frameBuffer.Length; i++)
+                _frameBuffer[i] = null;
+            _frameBufferCount = 0;
+        }
+
         public float[] BuildModelInput(PolicyFeatureFrame featureFrame, int targetInputSize)
         {
             if (featureFrame == null || featureFrame.Input == null)
                 return Array.Empty<float>();
+
+            // Frame-stacked model: push current frame and concatenate history.
+            if (targetInputSize == StackedInputSize && _frameStackDepth > 1)
+                return BuildStackedInput(featureFrame.Input);
 
             if (targetInputSize == InputSize)
                 return featureFrame.Input;
@@ -118,6 +188,32 @@ namespace MazeChase.AI.Autoplay
             }
 
             throw new ArgumentOutOfRangeException(nameof(targetInputSize), $"Unsupported model input size {targetInputSize}.");
+        }
+
+        /// <summary>
+        /// Like BuildModelInput but for hypothetical projected states.
+        /// Does not push into the frame buffer.
+        /// </summary>
+        public float[] BuildModelInputProjected(PolicyFeatureFrame featureFrame, int targetInputSize)
+        {
+            if (featureFrame == null || featureFrame.Input == null)
+                return Array.Empty<float>();
+
+            if (targetInputSize == StackedInputSize && _frameStackDepth > 1)
+                return BuildProjectedStackedInput(featureFrame.Input);
+
+            if (targetInputSize == InputSize)
+                return featureFrame.Input;
+
+            if (targetInputSize == LegacyInputSizeValue)
+            {
+                float[] legacyInput = new float[LegacyInputSizeValue];
+                Array.Copy(featureFrame.Input, 0, legacyInput, 0, BaseSectionSize);
+                Array.Copy(featureFrame.Input, BaseSectionSize + EnhancedGlobalFeatureCount, legacyInput, BaseSectionSize, TemporalFeatureCount);
+                return legacyInput;
+            }
+
+            return featureFrame.Input;
         }
 
         private void EncodeDirection(

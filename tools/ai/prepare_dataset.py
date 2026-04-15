@@ -24,6 +24,7 @@ CHOSEN_OPPORTUNITY_OFFSET = 12
 RECENT_TILE_WINDOW = 48
 LOW_PELLET_THRESHOLD = 24
 OPPOSITE_DIRECTIONS = {1: 2, 2: 1, 3: 4, 4: 3}
+DEFAULT_FRAME_STACK = 3
 
 
 def softmax(scores: np.ndarray) -> np.ndarray:
@@ -295,15 +296,18 @@ def main() -> None:
     parser.add_argument("--low-lives-weight-bonus", type=float, default=0.4, help="Additive weight per life below the threshold.")
     parser.add_argument("--finish-weight-bonus", type=float, default=0.45, help="Extra weight for critical low-pellet cleanup choices.")
     parser.add_argument("--death-risk-horizon", type=int, default=12, help="Number of future decisions used to label the death-risk target.")
+    parser.add_argument("--frame-stack", type=int, default=1, help="Number of consecutive frames to concatenate (1=no stacking, 3=current+2 previous).")
     args = parser.parse_args()
 
     input_weights = args.input_weight if args.input_weight is not None and len(args.input_weight) > 0 else None
     if input_weights is not None and len(input_weights) != len(args.input):
         raise SystemExit("--input-weight must be omitted or provide exactly one multiplier per --input path.")
 
+    frame_stack = max(1, args.frame_stack)
     rng = np.random.default_rng(args.seed)
     rows = []
     episode_states: dict[tuple[int, str], EpisodeFeatureState] = {}
+    episode_frame_buffers: dict[tuple[int, str], deque] = {}
     previous_entries: dict[int, dict] = {}
     run_counters: dict[int, int] = {}
 
@@ -316,20 +320,37 @@ def main() -> None:
         state_key = (input_index, episode_id)
         if state_key not in episode_states:
             episode_states[state_key] = EpisodeFeatureState()
+            episode_frame_buffers[state_key] = deque(maxlen=frame_stack)
 
         previous_entry = previous_entries.get(input_index)
         if starts_new_run(previous_entry, entry):
             run_counters[input_index] = run_counters.get(input_index, -1) + 1
+            # Reset frame buffer on new run to avoid leaking across episodes.
+            episode_frame_buffers[state_key] = deque(maxlen=frame_stack)
         previous_entries[input_index] = entry
 
         state = episode_states[state_key]
         state.observe(entry)
         augmented_input = build_augmented_input(entry["input"], entry, state)
+
+        # Frame-stacking: buffer single-frame vectors and concatenate.
+        frame_buf = episode_frame_buffers[state_key]
+        frame_buf.append(augmented_input)
+        if frame_stack > 1:
+            single_size = augmented_input.shape[0]
+            stacked = np.zeros(single_size * frame_stack, dtype=np.float32)
+            # Most recent frame first, then older frames.
+            for fi, frame in enumerate(reversed(list(frame_buf))):
+                stacked[fi * single_size:(fi + 1) * single_size] = frame
+            final_input = stacked
+        else:
+            final_input = augmented_input
+
         rows.append({
             "entry": entry,
             "action": action,
             "base_weight": float(base_weight),
-            "input": augmented_input,
+            "input": final_input,
             "episode_key": state_key,
             "run_key": (input_index, run_counters[input_index]),
         })
@@ -455,7 +476,8 @@ def main() -> None:
 
     print(
         f"Prepared {count} samples -> {args.output} "
-        f"(endgame-weighted rows: {endgame_count}, "
+        f"(features={feature_size}, frame_stack={frame_stack}, "
+        f"endgame-weighted rows: {endgame_count}, "
         f"death-risk positives: {int(np.sum(death_risk > 0.5))}, "
         f"junction rows: {boosted_junction_count}, "
         f"escape rows: {boosted_escape_count}, "

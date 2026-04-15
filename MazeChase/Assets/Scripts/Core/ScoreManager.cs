@@ -15,6 +15,7 @@ namespace MazeChase.Core
         private const string HighScoreKey = "MazeChase_HighScore";
         private const int DefaultLives = 3;
         private const int DefaultRound = 1;
+        private const int ExtraLifeThreshold = 10000;
 
         // Ghost-eat combo sequence per the original Pac-Man rules.
         private static readonly int[] GhostComboValues = { 200, 400, 800, 1600 };
@@ -31,6 +32,7 @@ namespace MazeChase.Core
         public int CurrentRound { get; set; } = DefaultRound;
 
         private int _ghostComboIndex;
+        private bool _extraLifeAwarded;
 
         // ── Unity lifecycle ─────────────────────────────────────────────────
         private void Awake()
@@ -60,7 +62,15 @@ namespace MazeChase.Core
                 return;
             }
 
+            int previousScore = Score;
             Score += points;
+
+            // Classic Pac-Man: award one extra life when crossing 10,000 points.
+            if (!_extraLifeAwarded && previousScore < ExtraLifeThreshold && Score >= ExtraLifeThreshold)
+            {
+                _extraLifeAwarded = true;
+                GainLife();
+            }
 
             if (Score > HighScore)
             {
@@ -132,6 +142,7 @@ namespace MazeChase.Core
             Lives = DefaultLives;
             CurrentRound = DefaultRound;
             _ghostComboIndex = 0;
+            _extraLifeAwarded = false;
 
             Debug.Log("[ScoreManager] Game reset");
 

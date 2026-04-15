@@ -2,6 +2,7 @@ using System.Collections;
 using UnityEngine;
 using MazeChase.Infrastructure.Logging;
 using MazeChase.Infrastructure.CrashHandling;
+using MazeChase.UI;
 
 namespace MazeChase.Core
 {
@@ -12,6 +13,8 @@ namespace MazeChase.Core
     /// </summary>
     public class GameBootstrap : MonoBehaviour
     {
+        private GameObject _gameplayObj;
+
         private void Awake()
         {
             EnsureSingleton<LogManager>("LogManager");
@@ -44,27 +47,78 @@ namespace MazeChase.Core
                 yield break;
             }
 
-            Debug.Log("[GameBootstrap] Boot complete. Starting gameplay...");
+            // Simulation / batch mode: skip menu, launch gameplay directly.
+            if (RuntimeExecutionMode.SimulationEnabled)
+            {
+                Debug.Log("[GameBootstrap] Boot complete. Starting gameplay (simulation)...");
+                LaunchGameplay();
+                yield break;
+            }
 
-            // Create gameplay setup
-            var gameplayObj = new GameObject("GameplaySetup");
-            gameplayObj.AddComponent<Game.GameplaySceneSetup>();
+            // Presentation mode: show title screen via MenuController.
+            Debug.Log("[GameBootstrap] Boot complete. Showing title screen...");
+            var menuObj = new GameObject("MenuController");
+            var menu = menuObj.AddComponent<MenuController>();
+            menu.OnStartGame += OnStartGame;
+            menu.OnRestartGame += OnRestartGame;
+            menu.ShowTitle();
         }
 
-        private void Update()
+        private void OnStartGame()
         {
-            if (Application.isBatchMode)
-                return;
+            Debug.Log("[GameBootstrap] Start game requested.");
+            LaunchGameplay();
+        }
 
-            // ESC to quit
-            if (Input.GetKeyDown(KeyCode.Escape))
+        private void OnRestartGame()
+        {
+            Debug.Log("[GameBootstrap] Restart game requested.");
+
+            // Tear down old gameplay objects.
+            if (_gameplayObj != null)
             {
-                Debug.Log("[GameBootstrap] ESC pressed — quitting.");
-                Application.Quit();
-#if UNITY_EDITOR
-                UnityEditor.EditorApplication.isPlaying = false;
-#endif
+                Destroy(_gameplayObj);
+                _gameplayObj = null;
             }
+
+            // Reset score/lives/round.
+            if (ScoreManager.Instance != null)
+                ScoreManager.Instance.ResetGame();
+
+            LaunchGameplay();
+        }
+
+        private void LaunchGameplay()
+        {
+            // Create persistent RL server once (survives across episode resets).
+            if (RuntimeExecutionMode.RLServerEnabled && AI.Autoplay.RLEnvironmentServer.Instance == null)
+            {
+                var rlObj = new GameObject("RLEnvironmentServer");
+                DontDestroyOnLoad(rlObj);
+                var rlServer = rlObj.AddComponent<AI.Autoplay.RLEnvironmentServer>();
+                rlServer.OnResetRequested += OnRLReset;
+            }
+
+            _gameplayObj = new GameObject("GameplaySetup");
+            _gameplayObj.AddComponent<Game.GameplaySceneSetup>();
+        }
+
+        private void OnRLReset()
+        {
+            Debug.Log("[GameBootstrap] RL reset requested.");
+            if (_gameplayObj != null)
+            {
+                // Use DestroyImmediate so all singleton Instance references are cleared
+                // before we create new gameplay objects. Deferred Destroy would leave stale
+                // references that cause new singletons to self-destruct in Awake.
+                DestroyImmediate(_gameplayObj);
+                _gameplayObj = null;
+            }
+            if (ScoreManager.Instance != null)
+                ScoreManager.Instance.ResetGame();
+
+            _gameplayObj = new GameObject("GameplaySetup");
+            _gameplayObj.AddComponent<Game.GameplaySceneSetup>();
         }
 
         /// <summary>
