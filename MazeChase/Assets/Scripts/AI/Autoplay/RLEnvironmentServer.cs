@@ -68,6 +68,7 @@ namespace MazeChase.AI.Autoplay
         private bool _freshEpisode; // True right after reinitialize; avoids needless reset on first connect.
         private bool _needsInitialState; // True when we need to send the first obs for this episode.
         private int _framesWaitingForTile; // Frames since action applied, waiting for OnTileArrived.
+    private float _timeWaitingForTile; // Game-time accumulated while waiting for OnTileArrived.
 
         // Reset callback (fired when Python sends a reset command).
         public event Action OnResetRequested;
@@ -109,6 +110,7 @@ namespace MazeChase.AI.Autoplay
             if (ScoreManager.Instance != null) ScoreManager.Instance.OnScoreChanged += OnScoreChanged;
             if (ScoreManager.Instance != null) ScoreManager.Instance.OnLivesChanged += OnLivesChanged;
             if (GameStateManager.Instance != null) GameStateManager.Instance.OnStateChanged += OnGameStateChanged;
+            Debug.Log($"[RLServer] Reinitialize complete. player={_player != null}, player.gameObject={_player?.gameObject?.name}, pellets={_pelletManager?.RemainingPellets}");
 
             ResetEpisodeState();
             _freshEpisode = true;
@@ -120,10 +122,19 @@ namespace MazeChase.AI.Autoplay
                 _tcpStarted = true;
             }
 
-            // Freeze the game until the Python client is ready.
-            // OnPlayerTileArrived won't fire until the player has a direction queued,
-            // so we must send the initial observation proactively from Update().
-            _savedTimeScale = Time.timeScale > 0f ? Time.timeScale : 1f;
+            // Apply fast-forward timeScale from command line (AutoplayManager normally
+            // handles this, but it's not created in RL mode).
+            string fastForward = CommandLineArgs.GetValue("--ai-fast-forward");
+            if (!string.IsNullOrWhiteSpace(fastForward) &&
+                float.TryParse(fastForward, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float requestedScale))
+            {
+                _savedTimeScale = RuntimeExecutionMode.ClampTimeScale(requestedScale);
+            }
+            else
+            {
+                _savedTimeScale = Time.timeScale > 0f ? Time.timeScale : 1f;
+            }
             Time.timeScale = 0f;
             _awaitingClient = _stream == null;
         }
@@ -268,7 +279,7 @@ namespace MazeChase.AI.Autoplay
             if (newState == GameState.Playing && oldState == GameState.Dying)
             {
                 _context?.ResetRuntimeMemory();
-                if (_stream != null && _stream.CanWrite && _framesWaitingForTile > 0)
+                if (_stream != null && _stream.CanWrite && !_waitingForAction)
                 {
                     _framesWaitingForTile = 0;
                     OnPlayerTileArrived(_player.CurrentTile);
@@ -280,7 +291,7 @@ namespace MazeChase.AI.Autoplay
             if (newState == GameState.Playing && oldState == GameState.RoundClear)
             {
                 _context?.ResetRuntimeMemory();
-                if (_stream != null && _stream.CanWrite && _framesWaitingForTile > 0)
+                if (_stream != null && _stream.CanWrite && !_waitingForAction)
                 {
                     _framesWaitingForTile = 0;
                     OnPlayerTileArrived(_player.CurrentTile);
@@ -300,6 +311,7 @@ namespace MazeChase.AI.Autoplay
                 return;
 
             _framesWaitingForTile = 0; // Cancel the fallback timer.
+            _timeWaitingForTile = 0f;
 
             if (_doneSent)
                 return; // Already sent done=true, waiting for reset.
@@ -421,6 +433,7 @@ namespace MazeChase.AI.Autoplay
                 }
 
                 _framesWaitingForTile = 1; // Start counting frames until OnTileArrived.
+                _timeWaitingForTile = 0f;
 
                 if (action >= 1 && action <= 4)
                 {
@@ -434,21 +447,36 @@ namespace MazeChase.AI.Autoplay
             // send state after a short wait. This handles:
             // (a) blocked directions (player stopped immediately)
             // (b) death/round-clear interrupting movement
+            // (c) hard timeout safety net for any missed edge case
             if (_framesWaitingForTile > 0)
             {
                 _framesWaitingForTile++;
+                _timeWaitingForTile += Time.deltaTime;
                 bool playerStopped = _player.State == PlayerController.MovementState.Stopped;
                 bool playerFrozen = _player.State == PlayerController.MovementState.Frozen;
+                var gsm = GameStateManager.Instance;
+                bool isDying = gsm != null && gsm.GetCurrentState() == GameState.Dying;
+                bool isRoundClear = gsm != null && gsm.GetCurrentState() == GameState.RoundClear;
+
+                // Don't force-send while in Dying or RoundClear — wait for the
+                // transition back to Playing, which will trigger OnGameStateChanged.
+                if (isDying || isRoundClear)
+                    return;
+
                 // Send state when:
                 // (a) blocked direction — player goes Stopped within 2 frames
                 // (b) episode ended (game-over/death made player Frozen)
-                if (_framesWaitingForTile > 2 && (playerStopped || _episodeDone || playerFrozen))
+                // (c) hard timeout — 2 game-seconds without tile arrival (1 tile ~0.2s at 5 tiles/sec)
+                bool hardTimeout = _timeWaitingForTile > 2f;
+                if ((_framesWaitingForTile > 2 && (playerStopped || _episodeDone || playerFrozen)) || hardTimeout)
                 {
+                    if (hardTimeout)
+                        Debug.LogWarning($"[RLServer] Hard timeout at {_timeWaitingForTile:F2}s ({_framesWaitingForTile} frames), " +
+                            $"playerState={_player.State}, gameState={gsm?.GetCurrentState()}. Forcing state send.");
                     _framesWaitingForTile = 0;
+                    _timeWaitingForTile = 0f;
                     OnPlayerTileArrived(_player.CurrentTile);
                 }
-                // No hard timeout — let the player finish moving. At 5 tiles/sec,
-                // one tile can take 100+ frames at high batch-mode framerates.
             }
         }
 

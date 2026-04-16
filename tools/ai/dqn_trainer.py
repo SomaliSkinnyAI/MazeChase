@@ -329,6 +329,8 @@ def main():
     parser.add_argument("--time-scale", type=float, default=20.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-freq", type=int, default=5_000, help="Print stats every N steps")
+    parser.add_argument("--resume", type=str, default=None, help="Path to .npz checkpoint to resume from")
+    parser.add_argument("--resume-step", type=int, default=None, help="Step count to resume from (required with --resume)")
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -340,7 +342,20 @@ def main():
           f"hidden={args.hidden1}x{args.hidden2}, lr={args.lr}, gamma={args.gamma}")
 
     # Initialize networks.
-    online_params = make_params(rng, input_size, args.hidden1, args.hidden2)
+    if args.resume:
+        print(f"[DQN] Resuming from checkpoint: {args.resume}")
+        ckpt = np.load(args.resume)
+        online_params = {
+            "W1": ckpt["W1"], "b1": ckpt["b1"],
+            "W2": ckpt["W2"], "b2": ckpt["b2"],
+            "Wp": ckpt["Wp"], "bp": ckpt["bp"],
+            "Wv": ckpt["Wv"], "bv": ckpt["bv"],
+            "Wr": ckpt["Wr"], "br": ckpt["br"],
+        }
+        if args.resume_step is None:
+            raise ValueError("--resume-step is required when using --resume")
+    else:
+        online_params = make_params(rng, input_size, args.hidden1, args.hidden2)
     target_params = copy_params(online_params)
     adam_state = make_adam_state(online_params)
     replay = ReplayBuffer(args.buffer_size, input_size)
@@ -369,7 +384,7 @@ def main():
     )
 
     # Tracking.
-    total_steps = 0
+    total_steps = args.resume_step if args.resume_step else 0
     episode_rewards = [0.0] * args.n_envs
     episode_scores = [0] * args.n_envs
     episode_lengths = [0] * args.n_envs
@@ -478,27 +493,44 @@ def main():
 
         # Evaluation.
         if total_steps % args.eval_freq == 0 and total_steps >= args.learning_starts:
-            eval_stats = evaluate(eval_env, online_params, n_episodes=args.eval_episodes)
-            print(
-                f"[DQN] EVAL step={total_steps}  "
-                f"mean_score={eval_stats['mean_score']:.0f}  "
-                f"max_score={eval_stats['max_score']:.0f}  "
-                f"mean_pellets={eval_stats['mean_pellets']:.0f}  "
-                f"mean_deaths={eval_stats['mean_deaths']:.1f}"
-            )
-
-            # Save checkpoint.
+            # Save checkpoint first (before eval, so we never lose progress on eval crash).
             ckpt_path = checkpoint_dir / f"dqn_step{total_steps}.npz"
             save_model(online_params, ckpt_path, input_size, args.hidden1, args.hidden2)
 
-            if eval_stats["mean_score"] > best_eval_score:
-                best_eval_score = eval_stats["mean_score"]
-                best_path = checkpoint_dir / "dqn_best.npz"
-                save_model(online_params, best_path, input_size, args.hidden1, args.hidden2)
-                # Also export Unity JSON directly.
-                json_path = checkpoint_dir / "dqn_best_policy.json"
-                export_to_unity_json(online_params, json_path, input_size, args.hidden1, args.hidden2, source="dqn-best")
-                print(f"[DQN] New best model! score={best_eval_score:.0f} -> {best_path}")
+            try:
+                eval_stats = evaluate(eval_env, online_params, n_episodes=args.eval_episodes)
+            except Exception as e:
+                print(f"[DQN] Eval env error: {e}. Restarting eval env...")
+                try:
+                    eval_env.close()
+                except Exception:
+                    pass
+                import time as _time
+                _time.sleep(2)
+                eval_env = UnityEnvironment(
+                    game_path=args.game,
+                    port=args.eval_port,
+                    time_scale=args.time_scale,
+                    seed=args.seed + 1000,
+                )
+                eval_stats = None
+
+            if eval_stats:
+                print(
+                    f"[DQN] EVAL step={total_steps}  "
+                    f"mean_score={eval_stats['mean_score']:.0f}  "
+                    f"max_score={eval_stats['max_score']:.0f}  "
+                    f"mean_pellets={eval_stats['mean_pellets']:.0f}  "
+                    f"mean_deaths={eval_stats['mean_deaths']:.1f}"
+                )
+
+                if eval_stats["mean_score"] > best_eval_score:
+                    best_eval_score = eval_stats["mean_score"]
+                    best_path = checkpoint_dir / "dqn_best.npz"
+                    save_model(online_params, best_path, input_size, args.hidden1, args.hidden2)
+                    json_path = checkpoint_dir / "dqn_best_policy.json"
+                    export_to_unity_json(online_params, json_path, input_size, args.hidden1, args.hidden2, source="dqn-best")
+                    print(f"[DQN] New best model! score={best_eval_score:.0f} -> {best_path}")
 
     # Final save.
     print(f"\n[DQN] Training complete. {total_steps} steps, {completed_episodes} episodes.")

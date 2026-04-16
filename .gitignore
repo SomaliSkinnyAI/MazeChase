@@ -40,8 +40,9 @@ tools/ai/backups/
 tools/ai/dqn_checkpoints*/
 tools/ai/tools/
 
-# Debug logs at root
+# Debug/build logs at root
 rl_debug*.log
+build.log
 
 # Claude internal
 .claude/

@@ -356,7 +356,8 @@ namespace MazeChase.AI.Autoplay
 
         private void ParseCommandLineConfiguration()
         {
-            _autoplayActive = CommandLineArgs.HasFlag("--autoplay");
+            // Default to AI autoplay on. Use F4 to switch to manual, or --no-autoplay to start manual.
+            _autoplayActive = !CommandLineArgs.HasFlag("--no-autoplay");
             _recordDataset = CommandLineArgs.HasFlag("--ai-record");
 
             string modeArg = CommandLineArgs.GetValue("--autoplay-mode");

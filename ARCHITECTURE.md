@@ -878,12 +878,32 @@ Python (dqn_trainer.py)                    Unity (RLEnvironmentServer.cs)
 
 #### Python Side
 
-- **`rl_environment.py`:** Gym-like client. `UnityEnvironment` manages a single Unity process, `VectorizedUnityEnvironment` runs N parallel instances with threaded step for faster data collection.
-- **`dqn_trainer.py`:** Double DQN trainer using the same MLP topology as the behavioral cloning model (102→192→96→4). Pure NumPy, no PyTorch dependency. Includes replay buffer (500K), target network (hard copy every 5K steps), epsilon-greedy exploration (1.0→0.05 over 200K steps), Huber loss, and checkpointing.
+- **`rl_environment.py`:** Gym-like client. `UnityEnvironment` manages a single Unity process, `VectorizedUnityEnvironment` runs N parallel instances with threaded step for faster data collection. Auto-recovery restarts individual environments on timeout without crashing the training run.
+- **`dqn_trainer.py`:** Double DQN trainer using the same MLP topology as the behavioral cloning model (102→192→96→4). Pure NumPy, no PyTorch dependency. Includes replay buffer (500K), target network (hard copy every 5K steps), epsilon-greedy exploration (1.0→0.05 over 200K steps), Huber loss, checkpointing, and `--resume` support for continuing from checkpoints.
 
 #### Deployment
 
 The trained Q-network exports to the same `policy_model.json` format used by behavioral cloning. The Q-head weights map to `policyW/policyB` slots, so `NeuralPolicyBot` loads DQN weights identically — zero deployment code changes needed.
+
+#### Training Results (2M steps, 4 parallel envs)
+
+| Metric | Value |
+|--------|-------|
+| Best eval mean_score | 5,288 (step 1.84M) |
+| Best eval max_score | 8,480 |
+| Best eval mean_pellets | 219/246 (89%) |
+| Training avg_score | ~4,700 |
+| Total episodes | 861 |
+
+The 2M-step DQN agent is functional but still learning basic navigation. For comparison, behavioral cloning v21 averages ~10K by copying a planner. DQN needs 10M-50M steps to match/exceed BC since it discovers everything from scratch via reward signals. Scaling to more parallel envs on a high-core-count machine (e.g., Threadripper) is the planned next step.
+
+#### Key Bug Fixes
+
+- **`DestroyImmediate` in RL mode:** Deferred `Destroy()` left stale singleton references when recreating gameplay on episode reset. Fixed by using `DestroyImmediate` in `GameBootstrap.OnRLReset()` and `GameplaySceneSetup.OnDestroy()`.
+- **`_freshEpisode` flag:** Must be cleared on any incoming TCP message (not just reset), otherwise second+ episode resets deadlock.
+- **`timeScale` in RL mode:** `AutoplayManager` (which applies `--ai-fast-forward`) is not created in RL mode. Fixed by having `RLEnvironmentServer.Reinitialize()` read and apply the flag directly.
+- **Game-time hard timeout:** Safety net (2 game-seconds) in `Update()` forces a state send if `OnTileArrived` misses an edge case (e.g., death mid-tile).
+- **Eval env auto-recovery:** Eval environment timeout no longer crashes the entire training run; it restarts the eval env and skips that eval checkpoint.
 
 #### Command-Line Flags
 
@@ -894,6 +914,7 @@ The trained Q-network exports to the same `policy_model.json` format used by beh
 | `--ai-headless` | Simulation mode (skip animations, menus) |
 | `--ai-fast-forward=N` | Time scale multiplier |
 | `--ai-seed=N` | Deterministic random seed |
+| `--no-autoplay` | Start in manual (human) mode instead of AI |
 
 ---
 
@@ -1138,7 +1159,9 @@ Global inactivity timer: 4 seconds without eating a pellet releases the next gho
 - ~~Implement extra life at 10,000 points (classic behavior)~~ *(Done — `ScoreManager.AddScore` awards at 10k)*
 - ~~Game over just exits~~ *(Done — `MenuController` game-over screen with restart/quit)*
 - ~~DQN reinforcement learning system~~ *(Done — `RLEnvironmentServer.cs`, `dqn_trainer.py`, `rl_environment.py`)*
-- Train DQN agent and benchmark against behavioral cloning v21
+- ~~Train DQN agent (2M steps)~~ *(Done — best eval 5,288, max 8,480, but still below BC v21)*
+- Scale DQN training to 10M-50M steps on high-core-count machine (16-24 parallel envs)
+- Hybrid warm-start: pretrain DQN from v21 BC weights, then improve with RL
 - Add intermission cutscenes between certain rounds
 - Create actual unit and integration tests
 - Add sound volume controls in a settings menu
